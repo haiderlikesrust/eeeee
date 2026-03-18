@@ -38,6 +38,7 @@ function BotCard({
   const [selectedServerId, setSelectedServerId] = useState('');
   const [saving, setSaving] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [revealedToken, setRevealedToken] = useState('');
 
   useEffect(() => {
     setName(bot?.user?.username || '');
@@ -45,6 +46,7 @@ function BotCard({
     setDiscoverable(!!bot.discoverable);
     setAnalytics(!!bot.analytics);
     setIntents(Number(bot.intents || 0));
+    setRevealedToken('');
   }, [bot]);
 
   const avatarUrl = resolveFileUrl(bot?.user?.avatar);
@@ -111,14 +113,32 @@ function BotCard({
     }
   };
 
+  const fetchToken = async () => {
+    const res = await get(`/bots/${bot._id}/token`);
+    if (!res?.token) throw new Error('No token returned');
+    setRevealedToken(res.token);
+    onCopyToken(res.token);
+    return res.token;
+  };
+
+  const revealToken = async () => {
+    try {
+      await fetchToken();
+      toast.success('Token revealed below');
+    } catch (err) {
+      toast.error(err?.error || err?.message || 'Failed to fetch token');
+    }
+  };
+
   const revealAndCopyToken = async () => {
     try {
-      const res = await get(`/bots/${bot._id}/token`);
-      if (!res?.token) throw new Error('No token returned');
-      const copied = await copyText(res.token);
-      if (!copied) throw new Error('Copy not supported on this device');
-      onCopyToken(res.token);
-      toast.success('Bot token copied');
+      const token = await fetchToken();
+      const copied = await copyText(token);
+      if (copied) {
+        toast.success('Bot token copied');
+      } else {
+        toast.success('Token revealed below');
+      }
     } catch (err) {
       toast.error(err?.error || err?.message || 'Failed to fetch token');
     }
@@ -182,9 +202,25 @@ function BotCard({
 
       <div className="dev-actions">
         <button className="primary" onClick={saveSettings} disabled={saving}>{saving ? 'Saving...' : 'Save Settings'}</button>
+        <button onClick={revealToken}>Reveal Token</button>
         <button onClick={revealAndCopyToken}>Copy Token</button>
         <button className="warn" onClick={regenerateToken}>Regenerate Token</button>
       </div>
+
+      {revealedToken && (
+        <div className="dev-grid" style={{ marginTop: 12 }}>
+          <label style={{ gridColumn: '1 / -1' }}>
+            <span>Bot Token</span>
+            <textarea
+              value={revealedToken}
+              readOnly
+              rows={3}
+              onFocus={(e) => e.target.select()}
+              style={{ width: '100%', resize: 'vertical' }}
+            />
+          </label>
+        </div>
+      )}
 
       <div className="dev-bot-section-label">Install to Server</div>
       <div className="dev-install-row">
