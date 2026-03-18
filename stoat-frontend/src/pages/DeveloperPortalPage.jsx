@@ -82,11 +82,41 @@ function BotCard({
     }
   };
 
+  const copyText = async (text) => {
+    if (navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // fall through to legacy copy path
+      }
+    }
+
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      textarea.style.pointerEvents = 'none';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
   const revealAndCopyToken = async () => {
     try {
       const res = await get(`/bots/${bot._id}/token`);
       if (!res?.token) throw new Error('No token returned');
-      await navigator.clipboard.writeText(res.token);
+      const copied = await copyText(res.token);
+      if (!copied) throw new Error('Copy not supported on this device');
       onCopyToken(res.token);
       toast.success('Bot token copied');
     } catch (err) {
