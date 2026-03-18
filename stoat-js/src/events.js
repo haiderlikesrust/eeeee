@@ -129,11 +129,12 @@ export function createEventServer(server) {
             voiceStates.get(channelId).set(userId, { clientKey: key });
 
             const members = getVoiceMembers(channelId);
-
-            broadcastToVoiceChannel(channelId, {
+            const voiceStateEvt = {
               type: 'VoiceStateUpdate',
               data: { channelId, userId, action: 'join', members },
-            });
+            };
+            // Notify all server members (so sidebar stays in sync for everyone, including rejoiner)
+            broadcastToChannel(channelId, voiceStateEvt).catch(() => {});
 
             const existingMembers = members.filter((id) => id !== userId);
             ws.send(JSON.stringify({
@@ -202,7 +203,8 @@ function leaveAllVoice(userId, key) {
         type: 'VoiceStateUpdate',
         data: { channelId, userId, action: 'leave', members },
       };
-      broadcastToVoiceChannel(channelId, evt);
+      // Notify all server members so sidebar stays in sync (including the user who left)
+      broadcastToChannel(channelId, evt).catch(() => {});
       const entry = clients.get(key);
       if (entry && entry.ws.readyState === 1) {
         entry.ws.send(JSON.stringify(evt));

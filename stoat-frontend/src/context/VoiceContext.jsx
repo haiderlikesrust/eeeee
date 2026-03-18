@@ -16,12 +16,17 @@ export function VoiceProvider({ children }) {
   const [deafened, setDeafened] = useState(false);
   const [sharingScreen, setSharingScreen] = useState(false);
   const [remoteScreenStreams, setRemoteScreenStreams] = useState({});
+  const [cameraOn, setCameraOn] = useState(false);
+  const [remoteCameraStreams, setRemoteCameraStreams] = useState({});
   const [speakingUserIds, setSpeakingUserIds] = useState(() => new Set());
+  const [channelActiveSince, setChannelActiveSince] = useState({}); // channelId -> timestamp when channel became non-empty
 
   const peersRef = useRef(new Map());
   const localStreamRef = useRef(null);
   const screenStreamRef = useRef(null);
+  const cameraStreamRef = useRef(null);
   const audioElementsRef = useRef(new Map());
+  const audioStreamsRef = useRef(new Map()); // remoteUserId -> MediaStream for playback (keeps all received audio tracks)
   const speakingAnalyserRef = useRef(new Map()); // remoteUserId -> { intervalId, context }
 
   const cleanup = useCallback(() => {
@@ -42,6 +47,7 @@ export function VoiceProvider({ children }) {
       audio.srcObject = null;
     }
     audioElementsRef.current.clear();
+    audioStreamsRef.current.clear();
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -52,8 +58,14 @@ export function VoiceProvider({ children }) {
       screenStreamRef.current.getTracks().forEach((t) => t.stop());
       screenStreamRef.current = null;
     }
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current = null;
+    }
     setSharingScreen(false);
+    setCameraOn(false);
     setRemoteScreenStreams({});
+    setRemoteCameraStreams({});
   }, []);
 
   const renegotiatePeer = useCallback((remoteUserId, channelId) => {
@@ -108,14 +120,18 @@ export function VoiceProvider({ children }) {
 
     pc.ontrack = (e) => {
       if (e.track?.kind === 'video') {
-        setRemoteScreenStreams((prev) => {
+        const track = e.track;
+        const nextStream = e.streams?.[0];
+        const isCamera = track.label === 'camera';
+        const setRemote = isCamera ? setRemoteCameraStreams : setRemoteScreenStreams;
+        setRemote((prev) => {
           const prevStream = prev[remoteUserId];
-          const nextStream = e.streams?.[0];
           if (!nextStream || (prevStream && prevStream.id === nextStream.id)) return prev;
           return { ...prev, [remoteUserId]: nextStream };
         });
       }
       if (e.track?.kind === 'audio') {
+        const track = e.track;
         const stream = e.streams?.[0];
         if (stream) {
           try {
@@ -146,23 +162,46 @@ export function VoiceProvider({ children }) {
             speakingAnalyserRef.current.set(remoteUserId, { intervalId, context: ctx });
           } catch (_) {}
         }
+        // Use a single playback stream per peer and add every received audio track to it,
+        // so renegotiation (e.g. screen share) never replaces the stream and drops audio.
+        let playbackStream = audioStreamsRef.current.get(remoteUserId);
+        if (!playbackStream) {
+          playbackStream = new MediaStream();
+          audioStreamsRef.current.set(remoteUserId, playbackStream);
+        }
+        if (track && !playbackStream.getAudioTracks().includes(track)) {
+          playbackStream.addTrack(track);
+        }
+        let audio = audioElementsRef.current.get(remoteUserId);
+        if (!audio) {
+          audio = new Audio();
+          audio.autoplay = true;
+          audioElementsRef.current.set(remoteUserId, audio);
+        }
+        audio.srcObject = playbackStream;
+        audio.play().catch(() => {});
       }
-      let audio = audioElementsRef.current.get(remoteUserId);
-      if (!audio) {
-        audio = new Audio();
-        audio.autoplay = true;
-        audioElementsRef.current.set(remoteUserId, audio);
-      }
-      audio.srcObject = e.streams[0];
-      audio.play().catch(() => {});
     };
 
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
         stopSpeakingDetection(remoteUserId);
+        const audio = audioElementsRef.current.get(remoteUserId);
+        if (audio) {
+          audio.pause();
+          audio.srcObject = null;
+        }
+        audioElementsRef.current.delete(remoteUserId);
+        audioStreamsRef.current.delete(remoteUserId);
         pc.close();
         peersRef.current.delete(remoteUserId);
         setRemoteScreenStreams((prev) => {
+          if (!prev[remoteUserId]) return prev;
+          const next = { ...prev };
+          delete next[remoteUserId];
+          return next;
+        });
+        setRemoteCameraStreams((prev) => {
           if (!prev[remoteUserId]) return prev;
           const next = { ...prev };
           delete next[remoteUserId];
@@ -178,7 +217,14 @@ export function VoiceProvider({ children }) {
     }
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach((track) => {
+        track.label = 'screen';
         pc.addTrack(track, screenStreamRef.current);
+      });
+    }
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => {
+        track.label = 'camera';
+        pc.addTrack(track, cameraStreamRef.current);
       });
     }
 
@@ -251,9 +297,9 @@ export function VoiceProvider({ children }) {
 
       const [screenTrack] = displayStream.getVideoTracks();
       if (screenTrack) {
+        screenTrack.label = 'screen';
         screenTrack.onended = () => stopScreenShare();
       }
-
       for (const [remoteUserId, pc] of peersRef.current.entries()) {
         if (pc.signalingState === 'closed') continue;
         displayStream.getTracks().forEach((track) => pc.addTrack(track, displayStream));
@@ -261,6 +307,41 @@ export function VoiceProvider({ children }) {
       }
     } catch {}
   }, [currentChannel, sharingScreen, stopScreenShare, renegotiatePeer]);
+
+  const stopCamera = useCallback(() => {
+    if (!cameraStreamRef.current || !currentChannel) return;
+
+    const cameraTracks = new Set(cameraStreamRef.current.getTracks());
+    for (const [remoteUserId, pc] of peersRef.current.entries()) {
+      for (const sender of pc.getSenders()) {
+        if (sender.track && cameraTracks.has(sender.track)) {
+          pc.removeTrack(sender);
+        }
+      }
+      renegotiatePeer(remoteUserId, currentChannel.id);
+    }
+
+    cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+    cameraStreamRef.current = null;
+    setCameraOn(false);
+  }, [currentChannel, renegotiatePeer]);
+
+  const startCamera = useCallback(async () => {
+    if (!currentChannel || cameraOn) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      cameraStreamRef.current = stream;
+      setCameraOn(true);
+
+      stream.getVideoTracks().forEach((t) => { t.label = 'camera'; });
+
+      for (const [remoteUserId, pc] of peersRef.current.entries()) {
+        if (pc.signalingState === 'closed') continue;
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+        renegotiatePeer(remoteUserId, currentChannel.id);
+      }
+    } catch {}
+  }, [currentChannel, cameraOn, renegotiatePeer]);
 
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
@@ -301,17 +382,37 @@ export function VoiceProvider({ children }) {
     const unsubReady = on('Ready', (data) => {
       if (data?.voiceStates) {
         setVoiceMembers(data.voiceStates);
+        setChannelActiveSince((prev) => {
+          const next = {};
+          for (const [chId, members] of Object.entries(data.voiceStates)) {
+            if ((members || []).length > 0) next[chId] = prev[chId] ?? Date.now();
+          }
+          return next;
+        });
       }
     });
 
     const unsubState = on('VoiceStateUpdate', (data) => {
       if (!data) return;
+      const members = data.members || [];
       setVoiceMembers((prev) => ({
         ...prev,
-        [data.channelId]: data.members || [],
+        [data.channelId]: members,
       }));
+      setChannelActiveSince((prev) => {
+        const next = { ...prev };
+        if (members.length > 0) next[data.channelId] = prev[data.channelId] ?? Date.now();
+        else delete next[data.channelId];
+        return next;
+      });
       if (data.action === 'leave' && data.userId) {
         setRemoteScreenStreams((prev) => {
+          if (!prev[data.userId]) return prev;
+          const next = { ...prev };
+          delete next[data.userId];
+          return next;
+        });
+        setRemoteCameraStreams((prev) => {
           if (!prev[data.userId]) return prev;
           const next = { ...prev };
           delete next[data.userId];
@@ -333,7 +434,12 @@ export function VoiceProvider({ children }) {
       const { fromUserId, signal, channelId } = data;
 
       if (signal.type === 'offer') {
-        const pc = createPeerConnection(fromUserId, channelId, false);
+        // Use existing peer only when stable (e.g. renegotiation after they started screen share).
+        // Creating a new PC on every offer would break the connection and drop audio.
+        let pc = peersRef.current.get(fromUserId);
+        if (!pc || pc.signalingState === 'closed' || pc.signalingState !== 'stable') {
+          pc = createPeerConnection(fromUserId, channelId, false);
+        }
         pc.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
           return pc.createAnswer();
         }).then((answer) => {
@@ -377,18 +483,24 @@ export function VoiceProvider({ children }) {
     <VoiceContext.Provider value={{
       currentChannel,
       voiceMembers,
+      channelActiveSince,
       speakingUserIds,
       muted,
       deafened,
       sharingScreen,
       remoteScreenStreams,
       localScreenStream: screenStreamRef.current,
+      cameraOn,
+      remoteCameraStreams,
+      localCameraStream: cameraStreamRef.current,
       joinVoice,
       leaveVoice,
       toggleMute,
       toggleDeafen,
       startScreenShare,
       stopScreenShare,
+      startCamera,
+      stopCamera,
     }}>
       {children}
     </VoiceContext.Provider>

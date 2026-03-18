@@ -21,6 +21,11 @@ export default function VoiceChannelView({ channel }) {
     localScreenStream,
     startScreenShare,
     stopScreenShare,
+    cameraOn,
+    remoteCameraStreams,
+    localCameraStream,
+    startCamera,
+    stopCamera,
   } = useVoice();
   const { user } = useAuth();
   const { isMobile, openChannelSidebar, openMemberSidebar } = useMobile();
@@ -54,6 +59,10 @@ export default function VoiceChannelView({ channel }) {
   const remoteScreenTiles = Object.entries(remoteScreenStreams || {}).map(([uid, stream]) => ({ userId: uid, stream, isMe: uid === user?._id }));
   const screenTiles = [...myScreenTile, ...remoteScreenTiles.filter((t) => t.userId !== user?._id)];
 
+  const myCameraTile = isConnected && cameraOn && localCameraStream ? [{ userId: user?._id, stream: localCameraStream, isMe: true }] : [];
+  const remoteCameraTiles = Object.entries(remoteCameraStreams || {}).map(([uid, stream]) => ({ userId: uid, stream, isMe: uid === user?._id }));
+  const cameraTiles = [...myCameraTile, ...remoteCameraTiles.filter((t) => t.userId !== user?._id)];
+
   return (
     <div className="voice-view">
       <div className="voice-view-header">
@@ -75,11 +84,23 @@ export default function VoiceChannelView({ channel }) {
 
       <div className="voice-view-body">
         <div className="voice-view-grid">
+          {cameraTiles.length > 0 && (
+            <div className="voice-camera-grid">
+              {cameraTiles.map((tile) => (
+                <VideoTile
+                  key={`cam-${tile.userId}`}
+                  stream={tile.stream}
+                  label={`${memberUsers[tile.userId]?.display_name || memberUsers[tile.userId]?.username || (tile.isMe ? 'You' : tile.userId?.slice(0, 8) || 'User')}${tile.isMe ? ' (You)' : ''}`}
+                  isCamera
+                />
+              ))}
+            </div>
+          )}
           {screenTiles.length > 0 && (
             <div className="voice-screen-grid">
               {screenTiles.map((tile) => (
-                <ScreenTile
-                  key={tile.userId}
+                <VideoTile
+                  key={`screen-${tile.userId}`}
                   stream={tile.stream}
                   label={`${memberUsers[tile.userId]?.display_name || memberUsers[tile.userId]?.username || (tile.isMe ? 'You' : tile.userId?.slice(0, 8) || 'User')}${tile.isMe ? ' (You)' : ''}`}
                 />
@@ -134,8 +155,21 @@ export default function VoiceChannelView({ channel }) {
         {isConnected ? (
           <div className="voice-footer-controls">
             <button
+              className={`voice-footer-btn ${cameraOn ? 'active' : ''}`}
+              onClick={cameraOn ? stopCamera : startCamera}
+              title={cameraOn ? 'Turn off camera' : 'Turn on camera'}
+            >
+              {cameraOn ? (
+                <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M18 10.48l4-3.98v11l-4-3.98V18c0 .55-.45 1-1 1H5c-.55 0-1-.45-1-1V6c0-.55.45-1 1-1h12c.55 0 1 .45 1 1v4.48z"/></svg>
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+              )}
+              <span>{cameraOn ? 'Stop Camera' : 'Camera'}</span>
+            </button>
+            <button
               className={`voice-footer-btn ${sharingScreen ? 'active' : ''}`}
               onClick={sharingScreen ? stopScreenShare : startScreenShare}
+              title={sharingScreen ? 'Stop sharing screen' : 'Share screen'}
             >
               {sharingScreen ? (
                 <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M21 3H3c-1.1 0-2 .9-2 2v10h2V5h18v10h2V5c0-1.1-.9-2-2-2zM13 17h-2v2H8v2h8v-2h-3v-2z"/></svg>
@@ -178,15 +212,16 @@ export default function VoiceChannelView({ channel }) {
   );
 }
 
-function ScreenTile({ stream, label }) {
+function VideoTile({ stream, label, isCamera }) {
   const ref = useRef(null);
   useEffect(() => {
     if (ref.current) {
       ref.current.srcObject = stream || null;
     }
   }, [stream]);
+  const className = isCamera ? 'voice-screen-tile voice-camera-tile' : 'voice-screen-tile';
   return (
-    <div className="voice-screen-tile">
+    <div className={className}>
       <video ref={ref} autoPlay playsInline muted className="voice-screen-video" />
       <div className="voice-screen-label">{label}</div>
     </div>

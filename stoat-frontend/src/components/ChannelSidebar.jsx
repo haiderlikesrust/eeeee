@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useWS } from '../context/WebSocketContext';
@@ -17,6 +17,30 @@ import './ChannelSidebar.css';
 function isBotUser(userObj) {
   const owner = userObj?.bot?.owner;
   return typeof owner === 'string' && owner.trim().length > 0;
+}
+
+function VoiceChannelTimer({ startTime }) {
+  const [elapsed, setElapsed] = useState(0);
+  const intervalRef = useRef(null);
+
+  useEffect(() => {
+    if (startTime == null) return;
+    const tick = () => setElapsed(Math.floor((Date.now() - startTime) / 1000));
+    tick();
+    intervalRef.current = setInterval(tick, 1000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [startTime]);
+
+  if (startTime == null) return null;
+  const m = Math.floor(elapsed / 60);
+  const s = elapsed % 60;
+  return (
+    <span className="voice-channel-timer" aria-label={`Call duration ${m}:${String(s).padStart(2, '0')}`}>
+      {m}:{String(s).padStart(2, '0')}
+    </span>
+  );
 }
 
 export default function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreated, onServerUpdated, onServerDeleted }) {
@@ -320,6 +344,9 @@ export default function ChannelSidebar({ type, server, channels, serverId, dms, 
                           <path fill="currentColor" d="M11.383 3.07904C11.009 2.92504 10.579 3.01004 10.293 3.29604L6.586 7.00304H4C3.45 7.00304 3 7.45304 3 8.00304V16.003C3 16.553 3.45 17.003 4 17.003H6.586L10.293 20.71C10.579 20.996 11.009 21.082 11.383 20.927C11.757 20.772 12 20.407 12 20.003V4.00304C12 3.59904 11.757 3.23404 11.383 3.07904ZM14 5.00304V7.07304C16.892 7.55404 19 10.028 19 13.003C19 15.978 16.892 18.452 14 18.933V21.003C18.045 20.505 21 17.115 21 13.003C21 8.89104 18.045 5.50104 14 5.00304Z"/>
                         </svg>
                         <span className="channel-name">{ch.name}</span>
+                        {membersInChannel.length > 0 && voice?.channelActiveSince?.[ch._id] != null && (
+                          <VoiceChannelTimer startTime={voice.channelActiveSince[ch._id]} />
+                        )}
                       </div>
                       {canManageChannels && (
                         <div className="channel-actions">

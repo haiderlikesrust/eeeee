@@ -7,11 +7,14 @@ export default function VoicePanel() {
     muted,
     deafened,
     sharingScreen,
+    cameraOn,
     toggleMute,
     toggleDeafen,
     leaveVoice,
     startScreenShare,
     stopScreenShare,
+    startCamera,
+    stopCamera,
   } = useVoice();
 
   if (!currentChannel) return null;
@@ -28,6 +31,13 @@ export default function VoicePanel() {
         </div>
       </div>
       <div className="voice-panel-controls">
+        <button
+          className={`voice-control-btn ${cameraOn ? 'active' : ''}`}
+          onClick={cameraOn ? stopCamera : startCamera}
+          title={cameraOn ? 'Turn off camera' : 'Turn on camera'}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+        </button>
         <button
           className={`voice-control-btn ${sharingScreen ? 'active' : ''}`}
           onClick={sharingScreen ? stopScreenShare : startScreenShare}

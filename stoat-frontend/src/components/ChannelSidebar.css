@@ -409,6 +409,15 @@
   color: var(--accent);
 }
 
+.voice-channel-timer {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #3ba55d);
+}
+
 .voice-members-list {
   padding: 0 8px 4px 32px;
 }
