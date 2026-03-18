@@ -1,5 +1,8 @@
 const API_BASE = '/api';
 
+const GET_CACHE_TTL_MS = 3000; // 3 seconds
+const getCache = new Map(); // path -> { data, expires }
+
 export function getToken() {
   return localStorage.getItem('token');
 }
@@ -32,7 +35,13 @@ export async function api(method, path, body) {
   return data;
 }
 
-export const get = (path) => api('GET', path);
+export async function get(path) {
+  const cached = getCache.get(path);
+  if (cached && Date.now() < cached.expires) return cached.data;
+  const data = await api('GET', path);
+  getCache.set(path, { data, expires: Date.now() + GET_CACHE_TTL_MS });
+  return data;
+}
 export const post = (path, body) => api('POST', path, body);
 export const patch = (path, body) => api('PATCH', path, body);
 export const put = (path, body) => api('PUT', path, body);

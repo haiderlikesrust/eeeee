@@ -4,12 +4,16 @@ import { useAuth } from '../context/AuthContext';
 import { useWS } from '../context/WebSocketContext';
 import { useMobile } from '../context/MobileContext';
 import { useUnread } from '../context/UnreadContext';
+import { useNotifications } from '../context/NotificationContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import { Permissions, hasPermission, ALL_PERMISSIONS } from '../utils/permissions';
 import { searchEmojis, ALL_EMOJIS } from '../utils/emojiData';
 import EmojiPicker from './EmojiPicker';
 import GiphyPicker from './GiphyPicker';
 import ProfileCard from './ProfileCard';
+import Lightbox from './Lightbox';
+import FormattingToolbar from './FormattingToolbar';
+import ThreadPanel from './ThreadPanel';
 import './ChatArea.css';
 
 function isEmojiOnly(content) {
@@ -143,7 +147,7 @@ function isBotUser(userObj) {
   return typeof owner === 'string' && owner.trim().length > 0;
 }
 
-function renderMessageContent(content, customEmojiMap, user, mentionDirectory, onMentionClick, roleDirectory) {
+function renderMessageContent(content, customEmojiMap, user, mentionDirectory, onMentionClick, roleDirectory, setLightboxSrc) {
   if (!content) return null;
   const jumbo = isEmojiOnly(content);
   const cls = jumbo ? 'emoji-jumbo' : '';
@@ -164,7 +168,7 @@ function renderMessageContent(content, customEmojiMap, user, mentionDirectory, o
     }
     if (/^https?:\/\/\S+$/i.test(part)) {
       if (isDirectMediaUrl(part)) {
-        return <img key={i} src={part} alt="gif" className="inline-gif" onClick={() => window.open(part, '_blank')} />;
+        return <img key={i} src={part} alt="gif" className="inline-gif" onClick={() => setLightboxSrc?.(part)} />;
       }
       return <a key={i} href={part} target="_blank" rel="noreferrer">{part}</a>;
     }
@@ -241,6 +245,12 @@ export default function ChatArea({ channelId, serverRoles }) {
   const { send, on } = useWS();
   const { isMobile, openChannelSidebar, openMemberSidebar } = useMobile();
   const { ackChannel } = useUnread();
+  const { setActiveChannel } = useNotifications();
+
+  useEffect(() => {
+    setActiveChannel?.(channelId);
+    return () => setActiveChannel?.(null);
+  }, [channelId, setActiveChannel]);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [channel, setChannel] = useState(null);
@@ -267,6 +277,10 @@ export default function ChatArea({ channelId, serverRoles }) {
   const [autocomplete, setAutocomplete] = useState(null);
   const [acSelected, setAcSelected] = useState(0);
   const [typingUserIds, setTypingUserIds] = useState(new Set());
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [slowmodeCooldown, setSlowmodeCooldown] = useState(0);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
+  const [openThread, setOpenThread] = useState(null);
   const bottomRef = useRef(null);
   const pollRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -278,7 +292,7 @@ export default function ChatArea({ channelId, serverRoles }) {
   const canManageMessages = hasPermission(perms, Permissions.MANAGE_MESSAGES);
   const canAttach = hasPermission(perms, Permissions.ATTACH_FILES);
   const canReact = hasPermission(perms, Permissions.ADD_REACTIONS);
-  const canSubmitMessage = (input.trim().length > 0 || pendingFiles.length > 0) && !uploading;
+  const canSubmitMessage = (input.trim().length > 0 || pendingFiles.length > 0) && !uploading && slowmodeCooldown <= 0;
 
   useEffect(() => {
     const byName = {};
@@ -346,7 +360,9 @@ export default function ChatArea({ channelId, serverRoles }) {
     setAutocomplete(null);
     setMentionCard(null);
     fetchMessages();
-    pollRef.current = setInterval(fetchMessages, 3000);
+    // Poll less frequently (10s) to reduce server load and battery; WS still delivers new messages in real time
+    const pollIntervalMs = 10000;
+    pollRef.current = setInterval(fetchMessages, pollIntervalMs);
     return () => clearInterval(pollRef.current);
   }, [fetchMessages]);
 
@@ -404,6 +420,15 @@ export default function ChatArea({ channelId, serverRoles }) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages]);
+
+  // Slowmode cooldown countdown
+  useEffect(() => {
+    if (slowmodeCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setSlowmodeCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [slowmodeCooldown > 0]);
 
   // Autocomplete logic (emoji :query and @mention)
   useEffect(() => {
@@ -493,6 +518,14 @@ export default function ChatArea({ channelId, serverRoles }) {
     inputRef.current?.focus();
   };
 
+  const startReply = (msg) => {
+    const authorName = typeof msg.author === 'object' ? (msg.author.display_name || msg.author.username) : 'Unknown';
+    setReplyingTo({ _id: msg._id, author: authorName, content: msg.content });
+    setContextMenu(null);
+    inputRef.current?.focus();
+  };
+  const cancelReply = () => setReplyingTo(null);
+
   const sendMessage = async (e) => {
     e.preventDefault();
     if (!input.trim() && pendingFiles.length === 0) return;
@@ -506,11 +539,17 @@ export default function ChatArea({ channelId, serverRoles }) {
       }
       const body = { content: input || '' };
       if (attachments.length > 0) body.attachments = attachments;
+      if (replyingTo) body.replies = [replyingTo._id];
       const msg = await post(`/channels/${channelId}/messages`, body);
       setMessages((prev) => [...prev, msg]);
       setInput('');
       setPendingFiles([]);
-    } catch {}
+      setReplyingTo(null);
+      // If slowmode, start cooldown
+      if (channel?.slowmode > 0) setSlowmodeCooldown(channel.slowmode);
+    } catch (err) {
+      if (err?.retry_after) setSlowmodeCooldown(err.retry_after);
+    }
     setUploading(false);
   };
 
@@ -619,6 +658,7 @@ export default function ChatArea({ channelId, serverRoles }) {
 
   const shouldShowHeader = (msg, idx) => {
     if (idx === 0) return true;
+    if (msg.reply_context && msg.reply_context.length > 0) return true;
     const prev = messages[idx - 1];
     const prevAuthor = typeof prev.author === 'object' ? prev.author?._id : prev.author;
     const curAuthor = typeof msg.author === 'object' ? msg.author?._id : msg.author;
@@ -627,6 +667,27 @@ export default function ChatArea({ channelId, serverRoles }) {
     const curTime = msg.created_at ? new Date(msg.created_at) : null;
     if (prevTime && curTime && (curTime - prevTime) > 5 * 60 * 1000) return true;
     return false;
+  };
+
+  const renderReplyContext = (msg) => {
+    if (!msg.reply_context || msg.reply_context.length === 0) return null;
+    return msg.reply_context.map((rc, i) => {
+      const rcAuthor = typeof rc.author === 'object' ? (rc.author.display_name || rc.author.username) : 'Unknown';
+      const rcAvatarUrl = typeof rc.author === 'object' && rc.author?.avatar ? resolveFileUrl(rc.author.avatar) : null;
+      return (
+        <div key={i} className="msg-reply-context" onClick={() => {
+          const el = document.getElementById(`msg-${rc._id}`);
+          if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('msg-highlight'); setTimeout(() => el.classList.remove('msg-highlight'), 1500); }
+        }}>
+          <svg className="msg-reply-spine" width="33" height="16" viewBox="0 0 33 16"><path d="M0 16 C0 8, 8 0, 16 0 L33 0" fill="none" stroke="var(--text-muted)" strokeWidth="2"/></svg>
+          <span className="msg-reply-avatar">
+            {rcAvatarUrl ? <img src={rcAvatarUrl} alt="" /> : <span className="msg-reply-avatar-fallback">{rcAuthor[0]?.toUpperCase()}</span>}
+          </span>
+          <span className="msg-reply-author">{rcAuthor}</span>
+          <span className="msg-reply-text">{rc.content || (rc.attachments?.length > 0 ? 'Click to see attachment' : '...')}</span>
+        </div>
+      );
+    });
   };
 
   const renderReactionEmoji = (reactionId) => {
@@ -723,7 +784,34 @@ export default function ChatArea({ channelId, serverRoles }) {
     );
   }
 
+  const startThread = async (msg) => {
+    setContextMenu(null);
+    if (msg.thread_id) {
+      // Thread already exists, open it
+      try {
+        const thread = await get(`/channels/${msg.thread_id}`);
+        setOpenThread(thread);
+      } catch {}
+      return;
+    }
+    try {
+      const thread = await post(`/channels/${channelId}/threads`, { message_id: msg._id });
+      // Update message in local state with thread_id
+      setMessages((prev) => prev.map((m) => m._id === msg._id ? { ...m, thread_id: thread._id } : m));
+      setOpenThread(thread);
+    } catch {}
+  };
+
+  const openThreadFromMsg = async (msg) => {
+    if (!msg.thread_id) return;
+    try {
+      const thread = await get(`/channels/${msg.thread_id}`);
+      setOpenThread(thread);
+    } catch {}
+  };
+
   return (
+    <>
     <div className="chat-area" onClick={() => { setContextMenu(null); setShowEmojiPicker(null); setShowInputEmoji(false); setShowGifPicker(false); setMentionCard(null); }}>
       <div className="chat-header">
         {isMobile && (
@@ -804,7 +892,8 @@ export default function ChatArea({ channelId, serverRoles }) {
           const showHeader = shouldShowHeader(msg, idx);
           const isEditing = editingMsg === msg._id;
           return (
-            <div key={msg._id} className={`message ${showHeader ? 'with-header' : 'compact'} ${isEditing ? 'editing' : ''} ${msg.pinned ? 'pinned' : ''}`} onContextMenu={(e) => handleContextMenu(e, msg)}>
+            <div key={msg._id} id={`msg-${msg._id}`} className={`message ${showHeader ? 'with-header' : 'compact'} ${isEditing ? 'editing' : ''} ${msg.pinned ? 'pinned' : ''} ${msg.reply_context && msg.replies?.length ? 'has-reply' : ''}`} onContextMenu={(e) => handleContextMenu(e, msg)}>
+              {renderReplyContext(msg)}
               {showHeader && (
                 <div
                   className="msg-avatar"
@@ -849,7 +938,7 @@ export default function ChatArea({ channelId, serverRoles }) {
                   </div>
                 ) : (
                   <>
-                    {msg.content && <div className={`msg-text ${isEmojiOnly(msg.content) ? 'emoji-jumbo-text' : ''}`}>{renderMessageContent(msg.content, customEmojis, user, mentionDirectory, openMentionCard, roleDirectory)}</div>}
+                    {msg.content && <div className={`msg-text ${isEmojiOnly(msg.content) ? 'emoji-jumbo-text' : ''}`}>{renderMessageContent(msg.content, customEmojis, user, mentionDirectory, openMentionCard, roleDirectory, setLightboxSrc)}</div>}
                     {renderMessageEmbeds(msg.embeds)}
                     {renderLinkPreviews(msg.link_previews)}
                     {msg.attachments && msg.attachments.length > 0 && (
@@ -858,7 +947,7 @@ export default function ChatArea({ channelId, serverRoles }) {
                           const url = resolveFileUrl(att);
                           const isImage = att.content_type?.startsWith('image/') || att.metadata?.type === 'Image' || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(att.filename || '');
                           const isVideo = att.content_type?.startsWith('video/') || att.metadata?.type === 'Video';
-                          if (isImage && url) return <img key={ai} src={url} alt={att.filename || 'image'} className="msg-attachment-img" onClick={() => window.open(url, '_blank')} />;
+                          if (isImage && url) return <img key={ai} src={url} alt={att.filename || 'image'} className="msg-attachment-img" onClick={() => setLightboxSrc(url)} />;
                           if (isVideo && url) return <video key={ai} src={url} controls className="msg-attachment-video" />;
                           return (
                             <a key={ai} href={url} target="_blank" rel="noopener noreferrer" className="msg-attachment-file">
@@ -869,6 +958,12 @@ export default function ChatArea({ channelId, serverRoles }) {
                           );
                         })}
                       </div>
+                    )}
+                    {msg.thread_id && (
+                      <button className="thread-indicator" onClick={() => openThreadFromMsg(msg)}>
+                        <svg width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                        View Thread
+                      </button>
                     )}
                   </>
                 )}
@@ -894,11 +989,17 @@ export default function ChatArea({ channelId, serverRoles }) {
                       <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>
                     </button>
                   )}
+                  <button className="msg-action-btn" title="Reply" onClick={() => startReply(msg)}>
+                    <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>
+                  </button>
                   {(typeof msg.author === 'object' ? msg.author?._id : msg.author) === user?._id && (
                     <button className="msg-action-btn" title="Edit" onClick={() => startEdit(msg)}>
                       <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                     </button>
                   )}
+                  <button className="msg-action-btn" title="Thread" onClick={() => startThread(msg)}>
+                    <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                  </button>
                   <button className="msg-action-btn" title="Pin" onClick={() => msg.pinned ? unpinMessage(msg._id) : pinMessage(msg._id)}>
                     <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
                   </button>
@@ -919,6 +1020,10 @@ export default function ChatArea({ channelId, serverRoles }) {
         <>
           <div className="ctx-backdrop" onClick={() => setContextMenu(null)} />
           <div className="ctx-menu" style={{ top: contextMenu.y, left: contextMenu.x }}>
+            <div className="ctx-item" onClick={() => startReply(contextMenu.msg)}>
+              <svg width="14" height="14" viewBox="0 0 24 24" style={{marginRight:6,verticalAlign:'middle'}}><path fill="currentColor" d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>
+              Reply
+            </div>
             {canReact && (
               <div className="ctx-item" onClick={() => addReaction(contextMenu.msg._id, '👍')}>
                 <span className="ctx-quick-emoji">👍</span> React
@@ -927,6 +1032,10 @@ export default function ChatArea({ channelId, serverRoles }) {
             {canReact && (
               <div className="ctx-item" onClick={() => { setShowEmojiPicker(contextMenu.msg._id); setContextMenu(null); }}>Add Reaction</div>
             )}
+            <div className="ctx-item" onClick={() => startThread(contextMenu.msg)}>
+              <svg width="14" height="14" viewBox="0 0 24 24" style={{marginRight:6,verticalAlign:'middle'}}><path fill="currentColor" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+              {contextMenu.msg.thread_id ? 'Open Thread' : 'Start Thread'}
+            </div>
             <div className="ctx-item" onClick={() => { contextMenu.msg.pinned ? unpinMessage(contextMenu.msg._id) : pinMessage(contextMenu.msg._id); }}>
               {contextMenu.msg.pinned ? 'Unpin Message' : 'Pin Message'}
             </div>
@@ -962,6 +1071,15 @@ export default function ChatArea({ channelId, serverRoles }) {
 
       {canSend ? (
         <form className="chat-input-area" onSubmit={sendMessage}>
+          {replyingTo && (
+            <div className="reply-bar">
+              <svg width="16" height="16" viewBox="0 0 24 24" className="reply-bar-icon"><path fill="currentColor" d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>
+              <span className="reply-bar-label">Replying to</span>
+              <span className="reply-bar-author">{replyingTo.author}</span>
+              <span className="reply-bar-preview">{replyingTo.content?.slice(0, 80) || '...'}</span>
+              <button type="button" className="reply-bar-close" onClick={cancelReply} aria-label="Cancel reply">×</button>
+            </div>
+          )}
           {pendingFiles.length > 0 && (
             <div className="pending-files">
               {pendingFiles.map((f, i) => (
@@ -999,6 +1117,7 @@ export default function ChatArea({ channelId, serverRoles }) {
               ))}
             </div>
           )}
+          <FormattingToolbar inputRef={inputRef} value={input} onChange={setInput} />
           <div className="chat-input-wrap">
             {canAttach && (
               <button type="button" className="chat-attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach file">
@@ -1014,8 +1133,8 @@ export default function ChatArea({ channelId, serverRoles }) {
               onBlur={sendTypingStop}
               onPaste={canAttach ? handlePaste : undefined}
               onKeyDown={handleInputKeyDown}
-              placeholder={uploading ? 'Uploading...' : `Message ${channel?.channel_type === 'DirectMessage' ? '@' : '#'}${channelDisplayName}`}
-              disabled={uploading}
+              placeholder={slowmodeCooldown > 0 ? `Slowmode: ${slowmodeCooldown}s remaining...` : uploading ? 'Uploading...' : `Message ${channel?.channel_type === 'DirectMessage' ? '@' : '#'}${channelDisplayName}`}
+              disabled={uploading || slowmodeCooldown > 0}
             />
             <button type="button" className="chat-emoji-btn" onClick={(e) => { e.stopPropagation(); setShowInputEmoji(!showInputEmoji); }} title="Emojis">
               <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>
@@ -1053,6 +1172,11 @@ export default function ChatArea({ channelId, serverRoles }) {
           <div className="chat-no-send-text">This channel is locked. You cannot send messages here.</div>
         </div>
       )}
+      {lightboxSrc && <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
     </div>
+    {openThread && (
+      <ThreadPanel threadChannel={openThread} onClose={() => setOpenThread(null)} customEmojis={customEmojis} />
+    )}
+    </>
   );
 }

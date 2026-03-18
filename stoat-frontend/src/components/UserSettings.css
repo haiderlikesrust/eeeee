@@ -1,3 +1,97 @@
+/* ── Settings section: ensure auth-label and inputs are styled (Auth.css not loaded in settings) ── */
+.settings-section .auth-label {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  margin-bottom: 16px;
+}
+
+.settings-section .auth-label span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+
+.settings-section .auth-label input,
+.settings-section .auth-label textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  font-size: 14px;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-sizing: border-box;
+}
+
+.settings-section .auth-label input:focus,
+.settings-section .auth-label textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.settings-section .auth-label textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.settings-section h2 {
+  margin: 0 0 20px;
+  color: var(--header-primary);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.settings-section .settings-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.settings-section .settings-subhead {
+  margin: 24px 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.settings-section .modal-btn.primary {
+  margin-top: 24px;
+  margin-bottom: 0;
+  display: block;
+}
+
+.settings-section .modal-btn.secondary {
+  margin-bottom: 12px;
+}
+
+.settings-section .profile-color-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.settings-content {
+  padding-bottom: 24px;
+}
+
 .profile-summary-card {
   background: var(--bg-floating);
   border: 1px solid var(--input-border);

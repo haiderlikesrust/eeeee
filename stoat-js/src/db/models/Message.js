@@ -16,11 +16,15 @@ const messageSchema = new mongoose.Schema({
   reactions: { type: Map, of: [String], default: {} },
   masquerade: { name: String, avatar: String },
   pinned: { type: Boolean, default: false },
+  thread_id: String,
   flags: Number,
   created_at: { type: Date, default: Date.now },
   link_previews: [{ url: String, title: String, description: String, image: String, site_name: String }],
 }, { id: false });
 
+// GET /channels/:target/messages sorts by _id (asc/desc); compound index avoids in-memory sort
 messageSchema.index({ channel: 1, created_at: -1 });
+messageSchema.index({ channel: 1, _id: -1 });
+messageSchema.index({ channel: 1, _id: 1 });
 
 export default mongoose.model('Message', messageSchema);

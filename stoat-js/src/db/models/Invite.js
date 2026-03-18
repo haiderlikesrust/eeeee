@@ -8,6 +8,6 @@ const inviteSchema = new mongoose.Schema({
   type: { type: String, enum: ['Server', 'Group'], default: 'Server' },
 }, { id: false });
 
-inviteSchema.index({ _id: 1 });
+// MongoDB already creates a unique index on _id; do not add a custom one.
 
 export default mongoose.model('Invite', inviteSchema);

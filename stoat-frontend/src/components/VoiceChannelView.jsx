@@ -7,6 +7,10 @@ import { get } from '../api';
 import './VoiceChannelView.css';
 
 export default function VoiceChannelView({ channel }) {
+  const voice = useVoice();
+  const { user } = useAuth();
+  if (!voice) return null;
+
   const {
     currentChannel,
     voiceMembers,
@@ -26,8 +30,7 @@ export default function VoiceChannelView({ channel }) {
     localCameraStream,
     startCamera,
     stopCamera,
-  } = useVoice();
-  const { user } = useAuth();
+  } = voice;
   const { isMobile, openChannelSidebar, openMemberSidebar } = useMobile();
   const [memberUsers, setMemberUsers] = useState({});
   const [expandedScreenUserId, setExpandedScreenUserId] = useState(null);

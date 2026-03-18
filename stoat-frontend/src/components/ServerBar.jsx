@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -9,7 +9,7 @@ import { resolveFileUrl } from '../utils/avatarUrl';
 import { post } from '../api';
 import './ServerBar.css';
 
-export default function ServerBar({ servers, setServers, onServerAdded }) {
+function ServerBar({ servers, setServers, onServerAdded }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
@@ -140,3 +140,5 @@ export default function ServerBar({ servers, setServers, onServerAdded }) {
     </div>
   );
 }
+
+export default memo(ServerBar);

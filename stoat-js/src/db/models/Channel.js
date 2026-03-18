@@ -10,8 +10,9 @@ const channelSchema = new mongoose.Schema({
   channel_type: {
     type: String,
     required: true,
-    enum: ['SavedMessages', 'DirectMessage', 'Group', 'TextChannel', 'VoiceChannel'],
+    enum: ['SavedMessages', 'DirectMessage', 'Group', 'TextChannel', 'VoiceChannel', 'Thread'],
   },
+  slowmode: { type: Number, default: 0 },
   // SavedMessages
   user: String,
   // DirectMessage
@@ -31,6 +32,10 @@ const channelSchema = new mongoose.Schema({
   default_permissions: { type: mongoose.Schema.Types.Mixed, default: null },
   role_permissions: { type: mongoose.Schema.Types.Mixed, default: {} },
   voice: { max_users: Number },
+  // Thread
+  parent_channel: String,
+  parent_message: String,
+  thread_name: String,
 }, { id: false });
 
 channelSchema.index({ server: 1 });

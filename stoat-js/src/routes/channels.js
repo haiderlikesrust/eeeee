@@ -6,7 +6,7 @@ import {
 } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { toPublicUser } from '../publicUser.js';
-import { broadcastToChannel, GatewayIntents, isUserOnline } from '../events.js';
+import { broadcastToChannel, broadcastToServer, GatewayIntents, isUserOnline } from '../events.js';
 import { fetchLinkPreviewsForContent } from '../linkPreview.js';
 import {
   Permissions, ALL_PERMISSIONS, computeChannelPermissions, computeServerPermissions, hasPermission,
@@ -23,6 +23,7 @@ function canAccessChannel(channel, userId, member) {
   if (channel.channel_type === 'DirectMessage') return (channel.recipients || []).includes(userId);
   if (channel.channel_type === 'TextChannel' || channel.channel_type === 'VoiceChannel' || channel.channel_type === 'Group') return !!member || channel.owner === userId;
   if (channel.channel_type === 'SavedMessages') return channel.user === userId;
+  if (channel.channel_type === 'Thread') return !!member || channel.owner === userId;
   return false;
 }
 
@@ -40,14 +41,14 @@ async function getChannelPerms(ch, userId) {
   return { perms: computeChannelPermissions(server, member, ch), server, member };
 }
 
-function messageToJson(m, authorMap = {}) {
+function messageToJson(m, authorMap = {}, replyContext = null) {
   const a = m.author && authorMap[m.author];
   const reactions = m.reactions instanceof Map
     ? Object.fromEntries(m.reactions.entries())
     : (m.reactions && typeof m.reactions.toObject === 'function'
       ? m.reactions.toObject()
       : (m.reactions || {}));
-  return {
+  const obj = {
     _id: m._id,
     channel: m.channel,
     author: a ? toPublicUser(a, { relationship: 'None', online: false }) : m.author,
@@ -61,8 +62,36 @@ function messageToJson(m, authorMap = {}) {
     replies: m.replies || [],
     reactions: reactions,
     pinned: m.pinned || false,
+    masquerade: m.masquerade || undefined,
     created_at: m.created_at,
   };
+  if (m.thread_id) obj.thread_id = m.thread_id;
+  if (replyContext) obj.reply_context = replyContext;
+  return obj;
+}
+
+async function fetchReplyContext(replyIds, authorMap) {
+  if (!replyIds || replyIds.length === 0) return null;
+  const ids = replyIds.map((r) => (typeof r === 'object' ? r.id : r)).filter(Boolean);
+  if (ids.length === 0) return null;
+  const replyMsgs = await Message.find({ _id: { $in: ids } }).lean();
+  const neededAuthors = replyMsgs.map((rm) => rm.author).filter((id) => !authorMap[id]);
+  if (neededAuthors.length > 0) {
+    const extra = await User.find({ _id: { $in: neededAuthors } })
+      .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+      .lean();
+    for (const u of extra) authorMap[u._id] = u;
+  }
+  return replyMsgs.map((rm) => {
+    const ra = rm.author && authorMap[rm.author];
+    return {
+      _id: rm._id,
+      channel: rm.channel,
+      author: ra ? toPublicUser(ra, { relationship: 'None', online: false }) : rm.author,
+      content: rm.content ? rm.content.slice(0, 200) : '',
+      attachments: (rm.attachments || []).length > 0 ? [{ type: 'file' }] : [],
+    };
+  });
 }
 
 // POST /channels/create - Create group
@@ -126,10 +155,11 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   } else if (ch.owner !== req.userId) {
     return res.status(403).json({ type: 'Forbidden', error: 'Not owner' });
   }
-  const { name, description, icon, default_permissions, role_permissions } = req.body || {};
+  const { name, description, icon, default_permissions, role_permissions, slowmode } = req.body || {};
   if (name != null) ch.name = String(name).slice(0, 32);
   if (description != null) ch.description = description;
   if (icon != null) ch.icon = icon;
+  if (slowmode !== undefined) ch.slowmode = Math.max(0, Math.min(Number(slowmode) || 0, 21600));
   if (default_permissions !== undefined) ch.default_permissions = default_permissions;
   if (role_permissions !== undefined) {
     ch.role_permissions = role_permissions;
@@ -218,7 +248,33 @@ router.get('/:target/messages', authMiddleware(), async (req, res) => {
     .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
     .lean();
   const authorMap = Object.fromEntries(authors.map((a) => [a._id, a]));
-  res.json(messages.map((m) => messageToJson(m, authorMap)));
+  // Batch-fetch reply context for all messages that have replies
+  const allReplyIds = [...new Set(messages.flatMap((m) => (m.replies || []).map((r) => (typeof r === 'object' ? r.id : r))).filter(Boolean))];
+  let replyMsgMap = {};
+  if (allReplyIds.length > 0) {
+    const replyMsgs = await Message.find({ _id: { $in: allReplyIds } }).lean();
+    const replyAuthorIds = [...new Set(replyMsgs.map((rm) => rm.author).filter((id) => !authorMap[id]))];
+    if (replyAuthorIds.length > 0) {
+      const extraAuthors = await User.find({ _id: { $in: replyAuthorIds } })
+        .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+        .lean();
+      for (const u of extraAuthors) authorMap[u._id] = u;
+    }
+    for (const rm of replyMsgs) {
+      const ra = rm.author && authorMap[rm.author];
+      replyMsgMap[rm._id] = {
+        _id: rm._id, channel: rm.channel,
+        author: ra ? toPublicUser(ra, { relationship: 'None', online: false }) : rm.author,
+        content: rm.content ? rm.content.slice(0, 200) : '',
+        attachments: (rm.attachments || []).length > 0 ? [{ type: 'file' }] : [],
+      };
+    }
+  }
+  res.json(messages.map((m) => {
+    const rIds = (m.replies || []).map((r) => (typeof r === 'object' ? r.id : r)).filter(Boolean);
+    const ctx = rIds.length > 0 ? rIds.map((id) => replyMsgMap[id]).filter(Boolean) : null;
+    return messageToJson(m, authorMap, ctx);
+  }));
 });
 
 // GET /channels/:target/messages/:msg
@@ -239,17 +295,51 @@ router.get('/:target/messages/:msg', authMiddleware(), async (req, res) => {
 router.post('/:target/messages', authMiddleware(), async (req, res) => {
   const ch = await Channel.findById(req.params.target);
   if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
-  const member = await getMember(ch, req.userId);
-  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+  let member = await getMember(ch, req.userId);
+  // Threads: if no server member (e.g. thread has no server), check parent channel access
+  if (ch.channel_type === 'Thread' && !member && ch.parent_channel) {
+    const parent = await Channel.findById(ch.parent_channel);
+    if (parent) {
+      const parentMember = await getMember(parent, req.userId);
+      if (!canAccessChannel(parent, req.userId, parentMember)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+    }
+  } else if (!canAccessChannel(ch, req.userId, member)) {
+    return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+  }
   if (ch.server) {
     const ctx = await getChannelPerms(ch, req.userId);
     if (ctx && !hasPermission(ctx.perms, Permissions.SEND_MESSAGES)) {
       return res.status(403).json({ type: 'Forbidden', error: 'Missing SEND_MESSAGES permission' });
     }
   }
+  // Slowmode enforcement
+  if (ch.slowmode > 0) {
+    const lastMsg = await Message.findOne({ channel: ch._id, author: req.userId }).sort({ _id: -1 }).select('created_at').lean();
+    if (lastMsg?.created_at) {
+      const elapsed = (Date.now() - new Date(lastMsg.created_at).getTime()) / 1000;
+      if (elapsed < ch.slowmode) {
+        const remaining = Math.ceil(ch.slowmode - elapsed);
+        return res.status(429).json({ type: 'RateLimited', error: `Slowmode: wait ${remaining}s`, retry_after: remaining });
+      }
+    }
+  }
   const content = req.body?.content ?? '';
+  // Word filter enforcement
+  if (ch.server && content) {
+    const server = await Server.findById(ch.server).select('word_filter').lean();
+    if (server?.word_filter?.length > 0) {
+      const lower = content.toLowerCase();
+      const blocked = server.word_filter.find((w) => lower.includes(w.toLowerCase()));
+      if (blocked) {
+        return res.status(403).json({ type: 'Blocked', error: 'Message contains a blocked word' });
+      }
+    }
+  }
+  // Normalize replies: accept both string[] and {id, mention}[]
+  const rawReplies = req.body?.replies || [];
+  const replyIds = rawReplies.map((r) => (typeof r === 'object' ? r.id : r)).filter(Boolean);
   const msgId = ulid();
-  let msg = await Message.create({
+  const msg = await Message.create({
     _id: msgId,
     channel: ch._id,
     author: req.userId,
@@ -257,28 +347,94 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
     attachments: req.body?.attachments || [],
     embeds: req.body?.embeds || [],
     mentions: req.body?.mentions || [],
-    replies: req.body?.replies || [],
+    replies: replyIds,
+    masquerade: req.body?.masquerade || undefined,
     nonce: req.body?.nonce,
   });
-  try {
-    const linkPreviews = await fetchLinkPreviewsForContent(content, 2);
-    if (linkPreviews.length > 0) {
-      msg.link_previews = linkPreviews;
-      await msg.save();
-    }
-  } catch {
-    // ignore preview failures; message is already created
-  }
   ch.last_message_id = msgId;
   await ch.save();
+  // Respond and broadcast immediately; link preview runs off critical path to reduce latency
   const author = await User.findById(req.userId)
     .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
     .lean();
-  const payload = messageToJson(msg, { [req.userId]: author });
+  const authorMap = { [req.userId]: author };
+  const replyContext = await fetchReplyContext(replyIds, authorMap);
+  const payload = messageToJson(msg, authorMap, replyContext);
   await broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
     eventIntent: GatewayIntents.GUILD_MESSAGES,
   });
   res.status(201).json(payload);
+
+  // Fetch link previews after response; avoids blocking the request (up to ~3.5s per URL)
+  if (content && /https?:\/\//i.test(content)) {
+    fetchLinkPreviewsForContent(content, 2)
+      .then((linkPreviews) => {
+        if (linkPreviews.length > 0) {
+          return Message.updateOne({ _id: msgId }, { $set: { link_previews: linkPreviews } });
+        }
+      })
+      .catch(() => {});
+  }
+});
+
+// POST /channels/:target/threads - create a thread from a message
+router.post('/:target/threads', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+
+  const { message_id, name } = req.body || {};
+  if (!message_id) return res.status(400).json({ type: 'InvalidPayload', error: 'message_id required' });
+
+  const msg = await Message.findOne({ _id: message_id, channel: ch._id });
+  if (!msg) return res.status(404).json({ type: 'NotFound', error: 'Message not found' });
+
+  // Check if thread already exists for this message
+  if (msg.thread_id) {
+    const existing = await Channel.findById(msg.thread_id);
+    if (existing) return res.json(existing.toObject());
+  }
+
+  const threadId = ulid();
+  const threadName = name ? String(name).slice(0, 100) : (msg.content ? msg.content.slice(0, 50) : 'Thread');
+
+  const thread = await Channel.create({
+    _id: threadId,
+    channel_type: 'Thread',
+    server: ch.server || undefined,
+    name: threadName,
+    parent_channel: ch._id,
+    parent_message: message_id,
+    thread_name: threadName,
+  });
+
+  // Link message to thread
+  msg.thread_id = threadId;
+  await msg.save();
+
+  // Do not add threads to the server's channel list — they are nested under a message, not sidebar channels.
+
+  // Broadcast thread creation
+  if (ch.server) {
+    await broadcastToServer(ch.server, {
+      type: 'ThreadCreate',
+      data: { thread: thread.toObject(), parent_channel: ch._id, parent_message: message_id },
+    });
+  }
+
+  res.status(201).json(thread.toObject());
+});
+
+// GET /channels/:target/threads - list threads in a channel
+router.get('/:target/threads', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+
+  const threads = await Channel.find({ parent_channel: ch._id, channel_type: 'Thread' }).lean();
+  res.json(threads);
 });
 
 // PATCH /channels/:target/messages/:msg

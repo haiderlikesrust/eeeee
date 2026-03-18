@@ -10,6 +10,14 @@ const router = Router();
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+const MIME_MAP = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.svg': 'image/svg+xml', '.mp4': 'video/mp4', '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.pdf': 'application/pdf',
+  '.txt': 'text/plain', '.json': 'application/json', '.zip': 'application/zip',
+  '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.md': 'text/markdown',
+};
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => {
@@ -19,19 +27,9 @@ const storage = multer.diskStorage({
   },
 });
 
-const fileFilter = (req, file, cb) => {
-  const allowed = /\.(jpg|jpeg|png|gif|webp|svg|mp4|webm|mp3|ogg|wav|pdf|txt|zip|tar|gz|json|js|css|html|md)$/i;
-  if (allowed.test(path.extname(file.originalname)) || file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/')) {
-    cb(null, true);
-  } else {
-    cb(null, true);
-  }
-};
-
 const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 },
-  fileFilter,
 });
 
 // POST /attachments - upload a file, returns file metadata
@@ -42,7 +40,7 @@ router.post('/', authMiddleware(), upload.single('file'), (req, res) => {
   const id = path.basename(file.filename, path.extname(file.filename));
 
   const metadata = {
-    type: file.mimetype.startsWith('image/') ? 'Image' : file.mimetype.startsWith('video/') ? 'Video' : 'File',
+    type: file.mimetype.startsWith('image/') ? 'Image' : file.mimetype.startsWith('video/') ? 'Video' : file.mimetype.startsWith('audio/') ? 'Audio' : 'File',
   };
 
   if (file.mimetype.startsWith('image/')) {
@@ -63,13 +61,24 @@ router.post('/', authMiddleware(), upload.single('file'), (req, res) => {
   res.json(result);
 });
 
+function serveFile(filePath, originalFilename, res) {
+  const ext = path.extname(filePath).toLowerCase();
+  const mime = MIME_MAP[ext] || 'application/octet-stream';
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  if (!mime.startsWith('image/') && !mime.startsWith('video/') && !mime.startsWith('audio/')) {
+    res.setHeader('Content-Disposition', `attachment; filename="${originalFilename || path.basename(filePath)}"`);
+  }
+  return res.sendFile(filePath);
+}
+
 // GET /attachments/:filename - serve the file
 router.get('/:filename', (req, res) => {
   const filename = req.params.filename;
   const filePath = path.join(UPLOAD_DIR, filename);
 
   if (fs.existsSync(filePath)) {
-    return res.sendFile(filePath);
+    return serveFile(filePath, filename, res);
   }
 
   // If no extension, try to find a file that starts with this ID
@@ -77,7 +86,7 @@ router.get('/:filename', (req, res) => {
     const files = fs.readdirSync(UPLOAD_DIR);
     const match = files.find((f) => f.startsWith(filename + '.') || f === filename);
     if (match) {
-      return res.sendFile(path.join(UPLOAD_DIR, match));
+      return serveFile(path.join(UPLOAD_DIR, match), match, res);
     }
   }
 

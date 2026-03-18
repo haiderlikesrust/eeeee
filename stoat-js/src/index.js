@@ -4,6 +4,7 @@ import config from '../config.js';
 import { connectDb } from './db/index.js';
 import app from './app.js';
 import { createEventServer } from './events.js';
+import logger from './logger.js';
 
 async function main() {
   await connectDb();
@@ -15,13 +16,16 @@ async function main() {
   createEventServer(server);
 
   server.listen(config.port, () => {
-    console.log(`Stoat API (JS) listening on http://localhost:${config.port}`);
-    console.log(`WebSocket events on ws://localhost:${config.port}`);
-    console.log('MongoDB only - no Docker, no Redis');
+    logger.info({
+      msg: 'Stoat API (JS) listening',
+      port: config.port,
+      http: `http://localhost:${config.port}`,
+      ws: `ws://localhost:${config.port}`,
+    });
   });
 }
 
 main().catch((err) => {
-  console.error(err);
+  logger.fatal({ err, msg: 'Startup failed' });
   process.exit(1);
 });

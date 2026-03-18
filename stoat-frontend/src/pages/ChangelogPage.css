@@ -1,6 +1,11 @@
 /* ── Page ── */
+/* Full-height scroll container so page scrolls on mobile when #root has overflow: hidden */
 .changelog-page {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: var(--bg-tertiary);
   background-image:
     radial-gradient(ellipse 80% 50% at 50% 0%, var(--accent-glow), transparent),

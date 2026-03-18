@@ -1,7 +1,8 @@
 import mongoose from 'mongoose';
 import config from '../../config.js';
+import logger from '../logger.js';
 
 export async function connectDb() {
   await mongoose.connect(config.mongodb);
-  console.log('MongoDB connected');
+  logger.info({ msg: 'MongoDB connected' });
 }

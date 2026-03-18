@@ -13,16 +13,30 @@ router.post('/settings/fetch', authMiddleware(), async (req, res) => {
   res.json(out);
 });
 
-// POST /sync/settings/set
+// POST /sync/settings/set — batch updates in one round-trip to reduce latency and DB load
 router.post('/settings/set', authMiddleware(), async (req, res) => {
   const data = req.body || {};
-  for (const [key, value] of Object.entries(data)) {
-    await UserSettings.findOneAndUpdate(
-      { user_id: req.userId, key },
-      { $set: { user_id: req.userId, key, value: typeof value === 'string' ? value : JSON.stringify(value), updated_at: new Date() } },
-      { upsert: true }
-    );
+  const entries = Object.entries(data);
+  if (entries.length === 0) {
+    res.status(204).send();
+    return;
   }
+  const now = new Date();
+  const ops = entries.map(([key, value]) => ({
+    updateOne: {
+      filter: { user_id: req.userId, key },
+      update: {
+        $set: {
+          user_id: req.userId,
+          key,
+          value: typeof value === 'string' ? value : JSON.stringify(value),
+          updated_at: now,
+        },
+      },
+      upsert: true,
+    },
+  }));
+  await UserSettings.bulkWrite(ops);
   res.status(204).send();
 });
 

@@ -145,6 +145,7 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   if (canManageMembers) availableTabs.push('members');
   availableTabs.push('invites');
   if (canBan) availableTabs.push('bans');
+  if (canManageServer) availableTabs.push('wordfilter', 'auditlog');
   const uniqueTabs = [...new Set(availableTabs)];
 
   const [tab, setTab] = useState(uniqueTabs[0] || 'overview');
@@ -174,6 +175,9 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const [emojiUploading, setEmojiUploading] = useState(false);
   const iconInputRef = useRef(null);
   const emojiInputRef = useRef(null);
+  const [wordFilter, setWordFilter] = useState(server?.word_filter || []);
+  const [newWord, setNewWord] = useState('');
+  const [auditLogs, setAuditLogs] = useState([]);
 
   const getServerIconUrl = () => resolveFileUrl(server?.icon);
   const getErrMsg = (err, fallback) => err?.error || err?.message || fallback;
@@ -206,6 +210,8 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
     if (tab === 'channels') { loadChannels(); fetchRoles(); }
     if (tab === 'permissions') fetchRoles();
     if (tab === 'emojis') loadEmojis();
+    if (tab === 'wordfilter') setWordFilter(server?.word_filter || []);
+    if (tab === 'auditlog') loadAuditLog();
   }, [tab]);
 
   const fetchRoles = async () => {
@@ -468,6 +474,38 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
     }
   };
 
+  const addFilterWord = async () => {
+    const w = newWord.trim();
+    if (!w || wordFilter.includes(w)) return;
+    const updated = [...wordFilter, w];
+    try {
+      await patch(`/servers/${serverId}`, { word_filter: updated });
+      setWordFilter(updated);
+      setNewWord('');
+      toast.success('Word added to filter');
+    } catch (err) {
+      toast.error(getErrMsg(err, 'Failed to update word filter'));
+    }
+  };
+
+  const removeFilterWord = async (word) => {
+    const updated = wordFilter.filter((w) => w !== word);
+    try {
+      await patch(`/servers/${serverId}`, { word_filter: updated });
+      setWordFilter(updated);
+      toast.success('Word removed from filter');
+    } catch (err) {
+      toast.error(getErrMsg(err, 'Failed to update word filter'));
+    }
+  };
+
+  const loadAuditLog = async () => {
+    try {
+      const res = await get(`/servers/${serverId}/audit-log?limit=50`);
+      setAuditLogs(Array.isArray(res) ? res : []);
+    } catch { setAuditLogs([]); }
+  };
+
   return (
     <div className="settings-overlay">
       <div className="settings-panel">
@@ -481,6 +519,8 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
           {uniqueTabs.includes('members') && <div className={`settings-tab ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</div>}
           {uniqueTabs.includes('invites') && <div className={`settings-tab ${tab === 'invites' ? 'active' : ''}`} onClick={() => setTab('invites')}>Invites</div>}
           {uniqueTabs.includes('bans') && <div className={`settings-tab ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</div>}
+          {uniqueTabs.includes('wordfilter') && <div className={`settings-tab ${tab === 'wordfilter' ? 'active' : ''}`} onClick={() => setTab('wordfilter')}>Word Filter</div>}
+          {uniqueTabs.includes('auditlog') && <div className={`settings-tab ${tab === 'auditlog' ? 'active' : ''}`} onClick={() => setTab('auditlog')}>Audit Log</div>}
           <div className="settings-separator" />
           <div className="settings-tab close-tab" onClick={onClose}>
             <svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
@@ -772,6 +812,42 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {tab === 'wordfilter' && (
+            <div className="settings-section">
+              <h2>Word Filter</h2>
+              <p className="settings-hint">Messages containing these words will be blocked automatically.</p>
+              <div className="settings-add-row">
+                <input value={newWord} onChange={(e) => setNewWord(e.target.value)} placeholder="Add blocked word..." onKeyDown={(e) => e.key === 'Enter' && addFilterWord()} />
+                <button className="modal-btn primary" onClick={addFilterWord}>Add</button>
+              </div>
+              {wordFilter.length === 0 && <p className="settings-empty">No blocked words</p>}
+              <div className="settings-tag-list">
+                {wordFilter.map((w) => (
+                  <span key={w} className="settings-tag">
+                    {w}
+                    <button className="settings-tag-remove" onClick={() => removeFilterWord(w)} aria-label="Remove">×</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {tab === 'auditlog' && (
+            <div className="settings-section">
+              <h2>Audit Log</h2>
+              {auditLogs.length === 0 && <p className="settings-empty">No entries yet</p>}
+              {auditLogs.map((log) => (
+                <div key={log._id} className="settings-list-item">
+                  <div className="settings-list-info">
+                    <span className="settings-list-name">{typeof log.user === 'object' ? (log.user.display_name || log.user.username) : 'Unknown'}</span>
+                    <span className="settings-list-sub">{log.action} — {log.target_type ? `${log.target_type} ${log.target_id?.slice(0, 8)}` : ''}</span>
+                  </div>
+                  <span className="settings-list-sub">{log.created_at ? new Date(log.created_at).toLocaleString() : ''}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>

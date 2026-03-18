@@ -11,6 +11,18 @@ const TAGS = {
 
 const CHANGELOG = [
   {
+    version: '0.3.0',
+    date: '2026-03-18',
+    title: 'Production readiness & reliability',
+    changes: [
+      { tag: 'new', text: 'Health and readiness endpoints — GET /health and GET /ready for load balancers and Kubernetes (liveness/readiness probes).' },
+      { tag: 'new', text: 'Structured logging — Pino JSON logging on the backend for production search and aggregation; request logging and error details.' },
+      { tag: 'new', text: 'React Error Boundary — uncaught errors show a fallback UI with "Try again" and "Reload" instead of a blank screen.' },
+      { tag: 'fixed', text: 'Voice context crash — VoicePanel and VoiceChannelView no longer throw when useVoice() is null (e.g. during WebSocket reconnect).' },
+      { tag: 'fixed', text: 'Changelog scroll on mobile — page is scrollable on small screens when the app uses a fixed root layout.' },
+    ],
+  },
+  {
     version: '0.2.0',
     date: '2026-03-18',
     title: 'Voice, presence & polish',

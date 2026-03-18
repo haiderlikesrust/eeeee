@@ -1,0 +1,69 @@
+/* Bar sits above the message input; arrow toggles expand/collapse. Crisp 1px border, no blur. */
+.formatting-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--input-border);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  box-shadow: none;
+  contain: layout style;
+}
+
+.formatting-toolbar--collapsed {
+  padding: 2px 8px;
+  min-height: 24px;
+}
+
+.formatting-toolbar-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.12s, background 0.12s;
+}
+
+.formatting-toolbar-toggle:hover {
+  background: var(--bg-modifier-hover);
+  color: var(--header-primary);
+}
+
+.formatting-toolbar-toggle--collapsed {
+  transform: rotate(-90deg);
+}
+
+.fmt-btn {
+  width: 28px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.12s;
+  font-family: inherit;
+}
+
+.fmt-btn:hover {
+  background: var(--bg-modifier-hover);
+  color: var(--header-primary);
+}
+
+.fmt-bold { font-weight: 900; }
+.fmt-italic { font-style: italic; }
+.fmt-strike { text-decoration: line-through; }
+.fmt-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+.fmt-spoiler { letter-spacing: 1px; font-size: 11px; }

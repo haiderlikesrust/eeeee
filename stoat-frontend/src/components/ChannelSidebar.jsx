@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, memo } from 'react';
 import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useWS } from '../context/WebSocketContext';
@@ -43,7 +43,7 @@ function VoiceChannelTimer({ startTime }) {
   );
 }
 
-export default function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreated, onServerUpdated, onServerDeleted }) {
+function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreated, onServerUpdated, onServerDeleted }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
@@ -279,7 +279,7 @@ export default function ChannelSidebar({ type, server, channels, serverId, dms, 
 
       <div className="sidebar-channels">
         {(() => {
-          const textChannels = (channels || []).filter((ch) => ch.channel_type !== 'VoiceChannel');
+          const textChannels = (channels || []).filter((ch) => ch.channel_type !== 'VoiceChannel' && ch.channel_type !== 'Thread');
           const voiceChannels = (channels || []).filter((ch) => ch.channel_type === 'VoiceChannel');
           return (
             <>
@@ -657,3 +657,5 @@ function UserPanel({ user }) {
     </>
   );
 }
+
+export default memo(ChannelSidebar);

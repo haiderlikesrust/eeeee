@@ -1,16 +1,19 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { WebSocketProvider } from './context/WebSocketContext';
 import { VoiceProvider } from './context/VoiceContext';
 import { UnreadProvider } from './context/UnreadContext';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import InvitePage from './pages/InvitePage';
-import AppLayout from './pages/AppLayout';
-import AdminPage from './pages/AdminPage';
-import DeveloperPortalPage from './pages/DeveloperPortalPage';
-import BotBuilderEditorPage from './pages/BotBuilderEditorPage';
-import ChangelogPage from './pages/ChangelogPage';
+import { NotificationProvider } from './context/NotificationContext';
+
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const InvitePage = lazy(() => import('./pages/InvitePage'));
+const AppLayout = lazy(() => import('./pages/AppLayout'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
+const DeveloperPortalPage = lazy(() => import('./pages/DeveloperPortalPage'));
+const BotBuilderEditorPage = lazy(() => import('./pages/BotBuilderEditorPage'));
+const ChangelogPage = lazy(() => import('./pages/ChangelogPage'));
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -23,17 +26,25 @@ export default function App() {
     );
   }
 
+  const fallback = (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--text-muted)' }}>
+      Loading...
+    </div>
+  );
+
   if (!user) {
     return (
-      <Routes>
-        <Route path="/admin" element={<AdminPage />} />
-        <Route path="/invite/:code" element={<InvitePage />} />
-        <Route path="/changelog" element={<ChangelogPage />} />
-        <Route path="/developers" element={<Navigate to="/login" replace />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+      <Suspense fallback={fallback}>
+        <Routes>
+          <Route path="/admin" element={<AdminPage />} />
+          <Route path="/invite/:code" element={<InvitePage />} />
+          <Route path="/changelog" element={<ChangelogPage />} />
+          <Route path="/developers" element={<Navigate to="/login" replace />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </Suspense>
     );
   }
 
@@ -41,16 +52,20 @@ export default function App() {
     <WebSocketProvider>
       <VoiceProvider>
         <UnreadProvider>
-          <Routes>
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="/invite/:code" element={<InvitePage />} />
-            <Route path="/changelog" element={<ChangelogPage />} />
-            <Route path="/developers" element={<DeveloperPortalPage />} />
-            <Route path="/developer/editor" element={<BotBuilderEditorPage />} />
-            <Route path="/developers/editor" element={<BotBuilderEditorPage />} />
-            <Route path="/channels/*" element={<AppLayout />} />
-            <Route path="*" element={<Navigate to="/channels/@me" replace />} />
-          </Routes>
+          <NotificationProvider>
+            <Suspense fallback={fallback}>
+              <Routes>
+                <Route path="/admin" element={<AdminPage />} />
+                <Route path="/invite/:code" element={<InvitePage />} />
+                <Route path="/changelog" element={<ChangelogPage />} />
+                <Route path="/developers" element={<DeveloperPortalPage />} />
+                <Route path="/developer/editor" element={<BotBuilderEditorPage />} />
+                <Route path="/developers/editor" element={<BotBuilderEditorPage />} />
+                <Route path="/channels/*" element={<AppLayout />} />
+                <Route path="*" element={<Navigate to="/channels/@me" replace />} />
+              </Routes>
+            </Suspense>
+          </NotificationProvider>
         </UnreadProvider>
       </VoiceProvider>
     </WebSocketProvider>

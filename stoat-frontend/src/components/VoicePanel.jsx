@@ -2,6 +2,9 @@ import { useVoice } from '../context/VoiceContext';
 import './VoicePanel.css';
 
 export default function VoicePanel() {
+  const voice = useVoice();
+  if (!voice) return null;
+
   const {
     currentChannel,
     muted,
@@ -15,7 +18,7 @@ export default function VoicePanel() {
     stopScreenShare,
     startCamera,
     stopCamera,
-  } = useVoice();
+  } = voice;
 
   if (!currentChannel) return null;
 

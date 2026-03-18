@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import { ratelimit } from './middleware/ratelimit.js';
+import logger from './logger.js';
 import root from './routes/root.js';
 import auth from './routes/auth.js';
 import mfa from './routes/mfa.js';
@@ -22,6 +24,8 @@ import botPublic from './routes/botPublic.js';
 
 const app = express();
 
+// Compress JSON and text responses to reduce payload size and improve network efficiency
+app.use(compression());
 app.use(cors({ origin: true, credentials: true }));
 // Parse text/plain as JSON (client sometimes sends JSON with this content-type)
 app.use((req, res, next) => {
@@ -41,6 +45,22 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(ratelimit({ max: 120 }));
+
+// Structured request logging (skip health/ready to reduce noise)
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    if (req.path === '/health' || req.path === '/ready') return;
+    logger.info({
+      msg: 'request',
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - start,
+    });
+  });
+  next();
+});
 
 app.use('/', root);
 app.use('/auth', ratelimit({ max: 15 }), auth);
@@ -81,7 +101,7 @@ app.use('/0.8/admin', ratelimit({ max: 60 }), admin);
 app.use('/0.8/bot', ratelimit({ max: 180 }), botPublic);
 
 app.use((err, req, res, next) => {
-  console.error(err);
+  logger.error({ err, msg: 'Unhandled error', path: req.path, method: req.method });
   res.status(500).json({ type: 'InternalError', error: err.message });
 });
 

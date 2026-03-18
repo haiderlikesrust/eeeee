@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ulid } from 'ulid';
-import { Server, Channel, Member, User, Invite, ServerBan, Emoji } from '../db/models/index.js';
+import { Server, Channel, Member, User, Invite, ServerBan, Emoji, AuditLog, Message } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import {
   Permissions, DEFAULT_EVERYONE_PERMS, ALL_PERMISSIONS,
@@ -72,7 +72,7 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   if (!hasPermission(ctx.perms, Permissions.MANAGE_SERVER)) {
     return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_SERVER permission' });
   }
-  const { name, description, icon, banner, default_permissions, locked } = req.body || {};
+  const { name, description, icon, banner, default_permissions, locked, word_filter } = req.body || {};
   if (name != null) ctx.server.name = String(name).slice(0, 32);
   if (description != null) ctx.server.description = description;
   if (icon != null) ctx.server.icon = icon;
@@ -82,6 +82,9 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   }
   if (locked != null && ctx.server.owner === req.userId) {
     ctx.server.locked = !!locked;
+  }
+  if (word_filter !== undefined) {
+    ctx.server.word_filter = Array.isArray(word_filter) ? word_filter.map((w) => String(w).slice(0, 50)).slice(0, 100) : [];
   }
   await ctx.server.save();
   res.json(ctx.server.toObject());
@@ -520,6 +523,54 @@ router.get('/:target/permissions', authMiddleware(), async (req, res) => {
   if (!member) return res.status(403).json({ type: 'Forbidden', error: 'Not a member' });
   const perms = computeServerPermissions(server, member);
   res.json({ permissions: perms });
+});
+
+// GET /servers/:target/audit-log
+router.get('/:target/audit-log', authMiddleware(), async (req, res) => {
+  const ctx = await getServerAndMember(req, res);
+  if (!ctx) return;
+  if (!hasPermission(ctx.perms, Permissions.MANAGE_SERVER)) {
+    return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_SERVER permission' });
+  }
+  const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+  const before = req.query.before;
+  const q = { server: ctx.server._id };
+  if (before) q.created_at = { $lt: new Date(before) };
+  const logs = await AuditLog.find(q).sort({ created_at: -1 }).limit(limit).lean();
+  // Populate user data
+  const userIds = [...new Set(logs.map((l) => l.user))];
+  const users = await User.find({ _id: { $in: userIds } }).select('_id username display_name avatar').lean();
+  const userMap = Object.fromEntries(users.map((u) => [u._id, u]));
+  res.json(logs.map((l) => ({ ...l, user: userMap[l.user] || { _id: l.user, username: 'Unknown' } })));
+});
+
+// POST /servers/:target/webhook - Bot webhook for sending messages
+router.post('/:target/webhook/:channelId', authMiddleware(), async (req, res) => {
+  const ctx = await getServerAndMember(req, res);
+  if (!ctx) return;
+  const ch = await Channel.findById(req.params.channelId);
+  if (!ch || ch.server !== ctx.server._id) {
+    return res.status(404).json({ type: 'NotFound', error: 'Channel not found in this server' });
+  }
+  const { content, embeds, username, avatar_url } = req.body || {};
+  if (!content && !embeds) {
+    return res.status(400).json({ type: 'InvalidPayload', error: 'Content or embeds required' });
+  }
+  const msgId = ulid();
+  const msg = await Message.create({
+    _id: msgId,
+    channel: ch._id,
+    author: req.userId,
+    content: content || '',
+    embeds: embeds || [],
+    masquerade: (username || avatar_url) ? { name: username, avatar: avatar_url } : undefined,
+    created_at: new Date(),
+  });
+  broadcastToServer(ctx.server._id, {
+    type: 'Message',
+    data: msg.toObject(),
+  });
+  res.status(201).json(msg.toObject());
 });
 
 export default router;

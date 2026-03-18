@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useWS } from './WebSocketContext';
 import { useAuth } from './AuthContext';
 import { playSelfJoin, playSelfLeave, playOtherJoin, playOtherLeave } from '../utils/voiceSounds';
@@ -547,8 +547,10 @@ export function VoiceProvider({ children }) {
     };
   }, [cleanup]);
 
-  return (
-    <VoiceContext.Provider value={{
+  // Memoize context value so consumers (ChannelSidebar, VoicePanel, VoiceChannelView) only
+  // re-render when these deps change, not on every VoiceProvider render (e.g. ref updates).
+  const contextValue = useMemo(
+    () => ({
       currentChannel,
       voiceMembers,
       channelActiveSince,
@@ -569,7 +571,31 @@ export function VoiceProvider({ children }) {
       stopScreenShare,
       startCamera,
       stopCamera,
-    }}>
+    }),
+    [
+      currentChannel,
+      voiceMembers,
+      channelActiveSince,
+      speakingUserIds,
+      muted,
+      deafened,
+      sharingScreen,
+      remoteScreenStreams,
+      cameraOn,
+      remoteCameraStreams,
+      joinVoice,
+      leaveVoice,
+      toggleMute,
+      toggleDeafen,
+      startScreenShare,
+      stopScreenShare,
+      startCamera,
+      stopCamera,
+    ]
+  );
+
+  return (
+    <VoiceContext.Provider value={contextValue}>
       {children}
     </VoiceContext.Provider>
   );

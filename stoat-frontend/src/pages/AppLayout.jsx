@@ -81,7 +81,8 @@ function AppLayoutInner() {
     });
   }, [on]);
 
-  const addServer = (server) => {
+  // Stable callbacks so memo(ChannelSidebar) and memo(ServerBar) don't re-render every parent tick
+  const addServer = useCallback((server) => {
     setServers((prev) => {
       const idx = prev.findIndex((s) => s._id === server._id);
       if (idx >= 0) {
@@ -91,11 +92,11 @@ function AppLayoutInner() {
       }
       return [...prev, server];
     });
-  };
+  }, []);
 
-  const removeServer = (serverId) => {
+  const removeServer = useCallback((serverId) => {
     setServers((prev) => prev.filter((s) => s._id !== serverId));
-  };
+  }, []);
 
   return (
     <div
@@ -228,24 +229,25 @@ function ServerView({ servers, setServers, addServer, removeServer }) {
     };
   }, [on, serverId]);
 
-  const handleChannelCreated = (ch) => {
+  // Stable handlers so memo(ChannelSidebar) skips re-renders when only other ServerView state changes
+  const handleChannelCreated = useCallback((ch) => {
     if (ch) {
       setChannels((prev) => [...prev, ch]);
     } else {
       loadServer();
     }
-  };
+  }, [loadServer]);
 
-  const handleServerUpdated = (updated) => {
+  const handleServerUpdated = useCallback((updated) => {
     if (updated) {
       setServer(updated);
       addServer(updated);
     }
-  };
+  }, [addServer]);
 
-  const handleServerDeleted = (id) => {
+  const handleServerDeleted = useCallback((id) => {
     removeServer(id);
-  };
+  }, [removeServer]);
 
   return (
     <>
