@@ -8,6 +8,7 @@ import RegisterPage from './pages/RegisterPage';
 import AppLayout from './pages/AppLayout';
 import AdminPage from './pages/AdminPage';
 import DeveloperPortalPage from './pages/DeveloperPortalPage';
+import BotBuilderEditorPage from './pages/BotBuilderEditorPage';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -39,6 +40,8 @@ export default function App() {
           <Routes>
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/developers" element={<DeveloperPortalPage />} />
+            <Route path="/developer/editor" element={<BotBuilderEditorPage />} />
+            <Route path="/developers/editor" element={<BotBuilderEditorPage />} />
             <Route path="/channels/*" element={<AppLayout />} />
             <Route path="*" element={<Navigate to="/channels/@me" replace />} />
           </Routes>

@@ -6,10 +6,10 @@ import {
 } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { toPublicUser } from '../publicUser.js';
-import { broadcastToChannel, GatewayIntents } from '../events.js';
+import { broadcastToChannel, GatewayIntents, isUserOnline } from '../events.js';
 import { fetchLinkPreviewsForContent } from '../linkPreview.js';
 import {
-  Permissions, computeChannelPermissions, computeServerPermissions, hasPermission,
+  Permissions, ALL_PERMISSIONS, computeChannelPermissions, computeServerPermissions, hasPermission,
 } from '../permissions.js';
 
 const router = Router();
@@ -86,7 +86,30 @@ router.get('/:target', authMiddleware(), async (req, res) => {
   if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
   const member = await getMember(ch, req.userId);
   if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
-  res.json(ch);
+  const out = { ...ch };
+  if (ch.channel_type === 'DirectMessage' && Array.isArray(ch.recipients)) {
+    const otherId = ch.recipients.find((r) => r !== req.userId);
+    if (otherId) {
+      const otherUser = await User.findById(otherId).lean();
+      if (otherUser) {
+        out.other_user = toPublicUser(otherUser, { relationship: 'None', online: isUserOnline(otherId) });
+      }
+    }
+  }
+  res.json(out);
+});
+
+// GET /channels/:target/permissions - computed channel permissions for current user (respects overrides)
+router.get('/:target/permissions', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target).lean();
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+  if (!ch.server) return res.json({ permissions: ALL_PERMISSIONS });
+  const server = await Server.findById(ch.server).lean();
+  if (!server) return res.json({ permissions: 0 });
+  const perms = computeChannelPermissions(server, member, ch);
+  res.json({ permissions: perms });
 });
 
 // PATCH /channels/:target

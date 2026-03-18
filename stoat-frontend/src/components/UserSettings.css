@@ -1,4 +1,4 @@
-.profile-card {
+.profile-summary-card {
   background: var(--bg-floating);
   border: 1px solid var(--input-border);
   border-radius: var(--radius-lg);
@@ -11,7 +11,7 @@
   background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
 }
 
-.profile-card-body {
+.profile-summary-card-body {
   padding: 0 16px 16px;
 }
 
@@ -157,13 +157,80 @@
   min-height: 72px;
 }
 
-.settings-row-2 select {
+/* Custom dropdown (replaces native select so list is always dark-themed) */
+.settings-select-wrap {
+  position: relative;
   width: 100%;
+}
+
+.settings-select-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--input-border);
   background: var(--input-bg);
   color: var(--text-normal);
-  padding: 10px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--transition-fast);
+}
+
+.settings-select-btn:hover {
+  border-color: var(--text-muted);
+}
+
+.settings-select-btn:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.settings-select-chevron {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.settings-select-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-floating);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.settings-select-option {
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-normal);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.settings-select-option:hover {
+  background: var(--bg-modifier-hover);
+}
+
+.settings-select-option.selected {
+  background: var(--accent-muted);
+  color: var(--accent);
 }
 
 .profile-color-row {

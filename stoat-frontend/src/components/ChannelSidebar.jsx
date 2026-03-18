@@ -84,6 +84,7 @@ export default function ChannelSidebar({ type, server, channels, serverId, dms, 
           {dms && dms.length > 0 && (
             <>
               <div className="channel-category">DIRECT MESSAGES</div>
+              <div className="dm-list">
               {dms.map((dm) => (
                 <div
                   key={dm._id}
@@ -98,7 +99,7 @@ export default function ChannelSidebar({ type, server, channels, serverId, dms, 
                       const targetId = (dm.recipients || []).find((r) => r !== user?._id);
                       if (!targetId) return;
                       try {
-                        const u = await get(`/users/${targetId}`);
+                        const u = dm.other_user ? { ...dm.other_user, _id: targetId } : await get(`/users/${targetId}`);
                         const rect = e.currentTarget.getBoundingClientRect();
                         let left = rect.right + 8;
                         let top = rect.top;
@@ -108,18 +109,23 @@ export default function ChannelSidebar({ type, server, channels, serverId, dms, 
                       } catch {}
                     }}
                   >
-                    {(dm.recipients || []).filter((r) => r !== user?._id).length > 0 ? '#' : 'S'}
+                    {dm.other_user?.avatar ? (
+                      <img src={resolveFileUrl(dm.other_user.avatar)} alt="" className="dm-avatar-img" />
+                    ) : (
+                      (dm.other_user?.display_name || dm.other_user?.username || '?')[0].toUpperCase()
+                    )}
                   </span>
-                  <span className="channel-name">{dm.name || 'Direct Message'}</span>
+                  <span className="channel-name">{dm.other_user?.display_name || dm.other_user?.username || dm.name || 'Direct Message'}</span>
                 </div>
               ))}
+              </div>
             </>
           )}
         </div>
         {profileCard && (
           <>
             <div className="profile-card-backdrop" onClick={() => setProfileCard(null)} />
-            <ProfileCard user={profileCard.user} style={profileCard.style} />
+            <ProfileCard user={profileCard.user} style={profileCard.style} onClose={() => setProfileCard(null)} />
           </>
         )}
         <UserPanel user={user} />
@@ -324,7 +330,7 @@ export default function ChannelSidebar({ type, server, channels, serverId, dms, 
                       )}
                     </div>
                     {membersInChannel.length > 0 && (
-                      <VoiceChannelMembers memberIds={membersInChannel} />
+                      <VoiceChannelMembers memberIds={membersInChannel} channelId={ch._id} />
                     )}
                   </div>
                 );
@@ -428,9 +434,12 @@ export default function ChannelSidebar({ type, server, channels, serverId, dms, 
   );
 }
 
-function VoiceChannelMembers({ memberIds }) {
+function VoiceChannelMembers({ memberIds, channelId }) {
+  const voice = useVoice();
   const [users, setUsers] = useState({});
   const [profileCard, setProfileCard] = useState(null);
+  const isCurrentChannel = voice?.currentChannel?.id === channelId;
+  const speakingUserIds = voice?.speakingUserIds ?? new Set();
 
   useEffect(() => {
     const load = async () => {
@@ -458,7 +467,7 @@ function VoiceChannelMembers({ memberIds }) {
           return (
             <div
               key={uid}
-              className="voice-member-item"
+              className={`voice-member-item${isCurrentChannel && speakingUserIds.has(uid) ? ' voice-member-item--speaking' : ''}`}
               onClick={(e) => {
                 if (!u?._id) return;
                 const rect = e.currentTarget.getBoundingClientRect();
@@ -499,7 +508,7 @@ function VoiceChannelMembers({ memberIds }) {
       {profileCard && (
         <>
           <div className="profile-card-backdrop" onClick={() => setProfileCard(null)} />
-          <ProfileCard user={profileCard.user} style={profileCard.style} />
+          <ProfileCard user={profileCard.user} style={profileCard.style} onClose={() => setProfileCard(null)} />
         </>
       )}
     </>
@@ -598,7 +607,7 @@ function UserPanel({ user }) {
       {profileCard && (
         <>
           <div className="profile-card-backdrop" onClick={() => setProfileCard(null)} />
-          <ProfileCard user={profileCard.user} style={profileCard.style} />
+          <ProfileCard user={profileCard.user} style={profileCard.style} onClose={() => setProfileCard(null)} />
         </>
       )}
       {showSettings && <UserSettings onClose={() => setShowSettings(false)} />}

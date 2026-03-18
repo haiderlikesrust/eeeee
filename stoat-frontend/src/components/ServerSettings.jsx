@@ -94,6 +94,38 @@ function ChannelOverrideEditor({ value, onChange, items }) {
   );
 }
 
+/** Dark-themed dropdown for "Add Role" (replaces native select so list isn't white). */
+function RoleAssignDropdown({ assignableRoles, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, []);
+  if (!assignableRoles || assignableRoles.length === 0) return null;
+  return (
+    <div className="role-assign-dropdown" ref={ref}>
+      <button type="button" className="role-assign-trigger" onClick={() => setOpen(!open)}>
+        + Add Role
+        <svg width="12" height="12" viewBox="0 0 24 24"><path fill="currentColor" d="M7 10l5 5 5-5z"/></svg>
+      </button>
+      {open && (
+        <ul className="role-assign-list">
+          {assignableRoles.map((r) => (
+            <li key={r.id}>
+              <button type="button" className="role-assign-option" onClick={() => { onSelect(r.id); setOpen(false); }}>
+                <span className="role-dot-sm" style={{ background: r.colour || 'var(--text-muted)' }} />
+                {r.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function ServerSettings({ server, serverId, onClose, onUpdated, userPerms }) {
   const { user } = useAuth();
   const toast = useToast();
@@ -406,6 +438,12 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
         await put(`/channels/${selectedChannel._id}/permissions/${selectedOverrideRole}`, channelOverrides[selectedOverrideRole] || { allow: 0, deny: 0 });
       }
       toast.success('Channel override saved');
+      // Refetch channels so this channel's overrides are up to date and UI stays in sync
+      const s = await get(`/servers/${serverId}`);
+      const chs = (s?.channels || []).filter(c => typeof c === 'object');
+      setChannels(chs);
+      const updated = chs.find(c => c._id === selectedChannel._id);
+      if (updated) setSelectedChannel(updated);
     } catch (err) {
       toast.error(getErrMsg(err, 'Failed to save channel override'));
     }
@@ -539,13 +577,28 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
                 {selectedChannel && (
                   <div className="channel-override-editor">
                     <h3>#{selectedChannel.name}</h3>
-                    <div className="override-role-tabs">
-                      <button className={`override-role-tab ${selectedOverrideRole === 'everyone' ? 'active' : ''}`} onClick={() => setSelectedOverrideRole('everyone')}>@everyone</button>
+                    <p className="override-editing-label">Editing overrides for: <strong>{selectedOverrideRole === 'everyone' ? '@everyone' : (roles.find(r => r.id === selectedOverrideRole)?.name || selectedOverrideRole)}</strong></p>
+                    <div className="override-role-tabs" role="tablist" aria-label="Select role to edit">
+                      <button
+                        role="tab"
+                        aria-selected={selectedOverrideRole === 'everyone'}
+                        className={`override-role-tab ${selectedOverrideRole === 'everyone' ? 'active' : ''}`}
+                        onClick={() => setSelectedOverrideRole('everyone')}
+                      >
+                        @everyone
+                      </button>
                       {roles.map(r => (
-                        <button key={r.id} className={`override-role-tab ${selectedOverrideRole === r.id ? 'active' : ''}`} onClick={() => {
-                          setSelectedOverrideRole(r.id);
-                          if (!channelOverrides[r.id]) setChannelOverrides(prev => ({ ...prev, [r.id]: { allow: 0, deny: 0 } }));
-                        }} style={{ borderColor: r.colour || 'transparent' }}>
+                        <button
+                          key={r.id}
+                          role="tab"
+                          aria-selected={selectedOverrideRole === r.id}
+                          className={`override-role-tab ${selectedOverrideRole === r.id ? 'active' : ''}`}
+                          onClick={() => {
+                            setSelectedOverrideRole(r.id);
+                            if (!channelOverrides[r.id]) setChannelOverrides(prev => ({ ...prev, [r.id]: { allow: 0, deny: 0 } }));
+                          }}
+                          style={{ borderColor: selectedOverrideRole === r.id ? (r.colour || 'var(--accent)') : 'transparent' }}
+                        >
                           <span className="role-dot-sm" style={{ background: r.colour || 'var(--text-muted)' }} />
                           {r.name}
                         </button>
@@ -641,10 +694,10 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
                       </div>
                       <div className="settings-member-actions">
                         {canManageRoles && (
-                          <select className="role-assign-select" value="" onChange={(e) => { if (e.target.value) toggleMemberRole(m._id, e.target.value, true); e.target.value = ''; }}>
-                            <option value="">+ Add Role</option>
-                            {roles.filter(r => !memberRoleIds.includes(r.id)).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                          </select>
+                          <RoleAssignDropdown
+                            assignableRoles={roles.filter(r => !memberRoleIds.includes(r.id))}
+                            onSelect={(roleId) => toggleMemberRole(m._id, roleId, true)}
+                          />
                         )}
                         {!isMemberOwner && (
                           <>

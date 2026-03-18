@@ -82,12 +82,12 @@ export function createEventServer(server) {
       ws.close(4001, 'Missing token');
       return;
     }
-    clients.set(key, { ws, kind, userId, lastPing: Date.now(), intents: Number.isFinite(intents) ? intents : 0 });
 
     const user = await User.findById(userId).lean();
-
     const memberships = await Member.find({ user: userId }).lean();
     const serverIds = memberships.map((m) => m.server);
+    clients.set(key, { ws, kind, userId, lastPing: Date.now(), intents: Number.isFinite(intents) ? intents : 0, serverIds });
+
     const servers = await Server.find({ _id: { $in: serverIds } }).lean();
     const channelIds = servers.flatMap((s) => s.channels || []);
     const channels = await Channel.find({ _id: { $in: channelIds } }).lean();
@@ -100,6 +100,11 @@ export function createEventServer(server) {
     }
 
     ws.send(JSON.stringify({ type: 'Ready', data: { users: [user], servers, channels, voiceStates: voiceStatesData } }));
+
+    // Notify all servers this user/bot is in so member lists show online immediately
+    for (const sid of serverIds) {
+      broadcastToServer(sid, { type: 'PresenceUpdate', d: { user_id: userId } }).catch(() => {});
+    }
 
     ws.on('message', async (data) => {
       try {
@@ -174,8 +179,14 @@ export function createEventServer(server) {
     });
 
     ws.on('close', () => {
+      const entry = clients.get(key);
+      const serverIdsToNotify = entry?.serverIds || [];
       leaveAllVoice(userId, key);
       clients.delete(key);
+      // Notify servers so member lists update to show offline
+      for (const sid of serverIdsToNotify) {
+        broadcastToServer(sid, { type: 'PresenceUpdate', d: { user_id: userId } }).catch(() => {});
+      }
     });
   });
 

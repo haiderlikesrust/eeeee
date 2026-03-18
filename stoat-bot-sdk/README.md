@@ -151,10 +151,32 @@ Connect to:
 Current events:
 
 - `Ready`
+- `ServerMemberJoin` – when a user joins the server (via invite). Use for welcome bots.
 - `MESSAGE_CREATE`
 - `MESSAGE_UPDATE`
 - `MESSAGE_DELETE`
 - `MESSAGE_REACTION_ADD`
 - `MESSAGE_REACTION_REMOVE`
 
-You can use constants from `GatewayEvents` in the SDK.
+You can use constants from `GatewayEvents` in the SDK (e.g. `GatewayEvents.SERVER_MEMBER_JOIN`).
+
+## Welcome bot
+
+The API supports a welcome bot: allow the bot to send messages in a channel, then when a user joins the server the bot receives `ServerMemberJoin` and can post a customizable message.
+
+1. Add the bot to your server and give it permission to send messages in the welcome channel (or use a role that can).
+2. In your bot code, listen for `ServerMemberJoin` and call `POST /bot/channels/:channelId/messages` with your welcome text. Use `<@userId>` in the content and `mentions: [userId]` so the new member is mentioned.
+
+Example (see `examples/welcome-bot.js`): configure via commands in chat:
+
+```bash
+BOT_TOKEN=xxx node examples/welcome-bot.js
+```
+
+Then in a server channel:
+
+- `!setchannel <channelId>` – channel where welcome messages are posted
+- `!setwelcomemsg welcome $user` – welcome text; `$user` = mention of the new member
+- `!welcome` – show current channel and message
+
+Config is saved per server in `examples/.bot-data/welcome-bot.json`.

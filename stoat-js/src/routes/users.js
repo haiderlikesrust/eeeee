@@ -4,7 +4,7 @@ import { ulid } from 'ulid';
 import { User, Channel, Account, Member, Server, GlobalBadge } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { toPublicUser, normalizeProfileForOutput } from '../publicUser.js';
-import { broadcastToUser, broadcastToServer } from '../events.js';
+import { broadcastToUser, broadcastToServer, isUserOnline } from '../events.js';
 
 const router = Router();
 const PRESENCE_VALUES = new Set(['Online', 'Idle', 'Busy', 'Invisible']);
@@ -169,13 +169,23 @@ router.get('/servers', authMiddleware(), async (req, res) => {
   res.json(servers);
 });
 
-// GET /users/dms
+// GET /users/dms - include other_user for each DM so the client can show the name
 router.get('/dms', authMiddleware(), async (req, res) => {
   const channels = await Channel.find({
     channel_type: 'DirectMessage',
     recipients: req.userId,
   }).lean();
-  res.json(channels);
+  const out = [];
+  for (const ch of channels) {
+    const otherId = (ch.recipients || []).find((r) => r !== req.userId);
+    let other_user = null;
+    if (otherId) {
+      const other = await User.findById(otherId).lean();
+      if (other) other_user = toPublicUser(other, { relationship: 'None', online: isUserOnline(otherId) });
+    }
+    out.push({ ...ch, other_user });
+  }
+  res.json(out);
 });
 
 // POST /users/friend - Send friend request

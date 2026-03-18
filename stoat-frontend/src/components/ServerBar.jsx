@@ -61,7 +61,7 @@ export default function ServerBar({ servers, setServers, onServerAdded }) {
         title="Direct Messages"
       >
         {hasAnyDmUnread && <span className="server-unread-badge" aria-label="Unread messages" />}
-        <svg width="28" height="20" viewBox="0 0 28 20"><path fill="currentColor" d="M23.0212 1.67671C21.3107 0.879656 19.5079 0.318797 17.6584 0C17.4062 0.461742 17.1749 0.934541 16.966 1.4184C15.0194 1.11762 13.0495 1.11762 11.1029 1.4184C10.8939 0.934541 10.6627 0.461742 10.4099 0C8.55904 0.320753 6.75599 0.882568 5.04562 1.68093C1.00279 7.77986 -0.0279 13.7264 0.497038 19.5936C2.55888 21.1196 4.88548 22.2563 7.36193 22.9483C7.89225 22.2422 8.36413 21.4953 8.77234 20.7137C8.0196 20.4279 7.29459 20.078 6.60464 19.6685C6.79624 19.5272 6.98378 19.3812 7.16592 19.2352C12.2831 21.597 17.8341 21.597 22.8925 19.2352C23.0764 19.3831 23.2639 19.5291 23.4537 19.6685C22.762 20.0798 22.0352 20.4315 21.2807 20.7183C21.6897 21.4999 22.162 22.2467 22.6929 22.9529C25.1711 22.2617 27.4988 21.1242 29.5613 19.5982C30.1815 12.8264 28.5104 6.93527 23.0212 1.67671ZM9.68261 16.0358C8.22654 16.0358 7.03121 14.7054 7.03121 13.0861C7.03121 11.4667 8.19857 10.1327 9.68261 10.1327C11.1667 10.1327 12.3617 11.4685 12.3340 13.0861C12.3368 14.7054 11.1667 16.0358 9.68261 16.0358ZM20.3752 16.0358C18.9192 16.0358 17.7238 14.7054 17.7238 13.0861C17.7238 11.4667 18.8912 10.1327 20.3752 10.1327C21.8592 10.1327 23.0543 11.4685 23.0266 13.0861C23.0266 14.7054 21.8592 16.0358 20.3752 16.0358Z"/></svg>
+        <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons.svg#app-logo" /></svg>
       </div>
       <div className="server-separator" />
 
@@ -96,7 +96,7 @@ export default function ServerBar({ servers, setServers, onServerAdded }) {
 
       {showCreate && createPortal(
         <div className="modal-overlay" onClick={() => setShowCreate(false)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-box server-modal-box" onClick={(e) => e.stopPropagation()}>
             <h2>Create a Server</h2>
             <p className="modal-sub">Give your new server a personality with a name.</p>
             <label className="auth-label">
@@ -114,7 +114,7 @@ export default function ServerBar({ servers, setServers, onServerAdded }) {
 
       {showJoin && createPortal(
         <div className="modal-overlay" onClick={() => setShowJoin(false)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-box server-modal-box" onClick={(e) => e.stopPropagation()}>
             <h2>Join a Server</h2>
             <p className="modal-sub">Enter an invite code to join an existing server.</p>
             <label className="auth-label">

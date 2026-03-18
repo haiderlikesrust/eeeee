@@ -61,9 +61,12 @@
     transform: translateX(calc(-100% - 72px));
   }
 
-  /* Member sidebar: right edge, hidden by default */
+  /* Member sidebar: full-width overlay from right when open */
   .app-layout.mobile .member-sidebar {
+    left: 0;
     right: 0;
+    width: 100%;
+    max-width: 100%;
     transform: translateX(100%);
   }
 

@@ -257,8 +257,41 @@
     left: -12px;
   }
 
-  .modal-box {
-    width: calc(100vw - 32px);
-    max-width: 400px;
+  .modal-overlay {
+    align-items: flex-end;
+  }
+
+  .server-modal-box {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    padding: 20px 16px calc(16px + env(safe-area-inset-bottom));
+    animation: slideUp 0.2s ease;
+  }
+
+  .server-modal-box h2 {
+    font-size: 20px;
+  }
+
+  .server-modal-box .modal-sub {
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+
+  .server-modal-box .auth-label {
+    margin-bottom: 14px;
+  }
+
+  .server-modal-box .modal-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .server-modal-box .modal-btn {
+    width: 100%;
   }
 }

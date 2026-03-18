@@ -278,6 +278,7 @@ export default function ChatArea({ channelId, serverRoles }) {
   const canManageMessages = hasPermission(perms, Permissions.MANAGE_MESSAGES);
   const canAttach = hasPermission(perms, Permissions.ATTACH_FILES);
   const canReact = hasPermission(perms, Permissions.ADD_REACTIONS);
+  const canSubmitMessage = (input.trim().length > 0 || pendingFiles.length > 0) && !uploading;
 
   useEffect(() => {
     const byName = {};
@@ -299,9 +300,9 @@ export default function ChatArea({ channelId, serverRoles }) {
       setChannel(ch);
       if (ch.server) {
         try {
-          const p = await get(`/servers/${ch.server}/permissions`);
-          setPerms(p?.permissions ?? ALL_PERMISSIONS);
-        } catch { setPerms(ALL_PERMISSIONS); }
+          const p = await get(`/channels/${channelId}/permissions`);
+          setPerms(p?.permissions ?? 0);
+        } catch { setPerms(0); }
         try {
           const emojis = await get(`/servers/${ch.server}/emojis`);
           const map = {};
@@ -706,12 +707,16 @@ export default function ChatArea({ channelId, serverRoles }) {
     }
   };
 
+  const channelDisplayName = channel?.channel_type === 'DirectMessage' && channel?.other_user
+    ? (channel.other_user.display_name || channel.other_user.username || 'Direct Message')
+    : (channel?.name || 'Channel');
+
   if (loading) {
     return (
       <div className="chat-area">
         <div className="chat-header">
           {isMobile && <button className="mobile-drawer-btn" onClick={openChannelSidebar} aria-label="Open channels"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg></button>}
-          <span className="hash-big">#</span> {channel?.name || 'Loading...'}
+          <span className="hash-big">#</span> {channel ? channelDisplayName : 'Loading...'}
         </div>
         <div className="messages-list"><div className="empty-state">Loading messages...</div></div>
       </div>
@@ -727,7 +732,7 @@ export default function ChatArea({ channelId, serverRoles }) {
           </button>
         )}
         <span className="hash-big">#</span>
-        <span className="chat-header-name">{channel?.name || 'Channel'}</span>
+        <span className="chat-header-name">{channelDisplayName}</span>
         {!isMobile && channel?.description && <span className="chat-header-desc">{channel.description}</span>}
         {typingUserIds.size > 0 && (
           <span className="chat-header-typing">
@@ -791,8 +796,8 @@ export default function ChatArea({ channelId, serverRoles }) {
       <div className="messages-list">
         {messages.length === 0 && (
           <div className="welcome-msg">
-            <h2>Welcome to #{channel?.name || 'channel'}!</h2>
-            <p>This is the start of the channel.</p>
+            <h2>Welcome to #{channelDisplayName}!</h2>
+            <p>This is the start of the {channel?.channel_type === 'DirectMessage' ? 'conversation' : 'channel'}.</p>
           </div>
         )}
         {messages.map((msg, idx) => {
@@ -889,6 +894,11 @@ export default function ChatArea({ channelId, serverRoles }) {
                       <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>
                     </button>
                   )}
+                  {(typeof msg.author === 'object' ? msg.author?._id : msg.author) === user?._id && (
+                    <button className="msg-action-btn" title="Edit" onClick={() => startEdit(msg)}>
+                      <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                    </button>
+                  )}
                   <button className="msg-action-btn" title="Pin" onClick={() => msg.pinned ? unpinMessage(msg._id) : pinMessage(msg._id)}>
                     <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
                   </button>
@@ -945,6 +955,7 @@ export default function ChatArea({ channelId, serverRoles }) {
             member={mentionCard.member}
             style={mentionCard.style}
             className="mention-profile-card"
+            onClose={() => setMentionCard(null)}
           />
         </>
       )}
@@ -1003,7 +1014,7 @@ export default function ChatArea({ channelId, serverRoles }) {
               onBlur={sendTypingStop}
               onPaste={canAttach ? handlePaste : undefined}
               onKeyDown={handleInputKeyDown}
-              placeholder={uploading ? 'Uploading...' : `Message #${channel?.name || 'channel'}`}
+              placeholder={uploading ? 'Uploading...' : `Message ${channel?.channel_type === 'DirectMessage' ? '@' : '#'}${channelDisplayName}`}
               disabled={uploading}
             />
             <button type="button" className="chat-emoji-btn" onClick={(e) => { e.stopPropagation(); setShowInputEmoji(!showInputEmoji); }} title="Emojis">
@@ -1012,6 +1023,19 @@ export default function ChatArea({ channelId, serverRoles }) {
             <button type="button" className="chat-gif-btn" onClick={(e) => { e.stopPropagation(); setShowGifPicker((v) => !v); }} title="GIFs">
               GIF
             </button>
+            {isMobile && (
+              <button
+                type="submit"
+                className="chat-send-btn"
+                disabled={!canSubmitMessage}
+                aria-label="Send message"
+                title="Send"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="currentColor" d="M3.4 20.4 22 12 3.4 3.6l.1 6.5L16 12 3.5 13.9z" />
+                </svg>
+              </button>
+            )}
           </div>
           {showInputEmoji && (
             <div className="input-emoji-wrap" onClick={(e) => e.stopPropagation()}>
@@ -1025,8 +1049,8 @@ export default function ChatArea({ channelId, serverRoles }) {
           )}
         </form>
       ) : (
-        <div className="chat-input-area chat-no-send">
-          <div className="chat-no-send-text">You do not have permission to send messages in this channel.</div>
+        <div className="chat-input-area chat-no-send chat-input-locked">
+          <div className="chat-no-send-text">This channel is locked. You cannot send messages here.</div>
         </div>
       )}
     </div>

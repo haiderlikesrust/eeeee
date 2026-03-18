@@ -147,9 +147,23 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   const bot = await Bot.findById(req.params.target);
   if (!bot) return res.status(404).json({ type: 'NotFound', error: 'Bot not found' });
   if (bot.owner !== req.userId) return res.status(403).json({ type: 'Forbidden', error: 'Not owner' });
-  const { name, public: pub, analytics, discoverable, intents, interactions_url, terms_of_service_url, privacy_policy_url } = req.body || {};
-  if (name != null) {
-    const botUser = await User.findById(bot._id);
+  const { name, public: pub, analytics, discoverable, intents, interactions_url, terms_of_service_url, privacy_policy_url, avatar, profile } = req.body || {};
+  let botUser = await User.findById(bot._id);
+  if (botUser) {
+    if (name != null) {
+      botUser.username = String(name).slice(0, 32);
+    }
+    if (avatar != null) {
+      botUser.avatar = avatar;
+    }
+    if (profile != null && typeof profile === 'object') {
+      if (!botUser.profile || typeof botUser.profile !== 'object') botUser.profile = {};
+      if (profile.banner !== undefined) botUser.profile.banner = profile.banner;
+      botUser.markModified('profile');
+    }
+    await botUser.save();
+  } else if (name != null) {
+    botUser = await User.findById(bot._id);
     if (botUser) {
       botUser.username = String(name).slice(0, 32);
       await botUser.save();
@@ -166,7 +180,8 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   await bot.save();
   const out = bot.toObject();
   delete out.token;
-  res.json(out);
+  const userDoc = await User.findById(bot._id).lean();
+  res.json({ ...out, user: userDoc ? { ...userDoc, relationship: 'None', online: false } : undefined });
 });
 
 // DELETE /bots/:target

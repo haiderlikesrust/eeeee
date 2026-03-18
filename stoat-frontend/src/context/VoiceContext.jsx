@@ -16,13 +16,22 @@ export function VoiceProvider({ children }) {
   const [deafened, setDeafened] = useState(false);
   const [sharingScreen, setSharingScreen] = useState(false);
   const [remoteScreenStreams, setRemoteScreenStreams] = useState({});
+  const [speakingUserIds, setSpeakingUserIds] = useState(() => new Set());
 
   const peersRef = useRef(new Map());
   const localStreamRef = useRef(null);
   const screenStreamRef = useRef(null);
   const audioElementsRef = useRef(new Map());
+  const speakingAnalyserRef = useRef(new Map()); // remoteUserId -> { intervalId, context }
 
   const cleanup = useCallback(() => {
+    for (const [, data] of speakingAnalyserRef.current.entries()) {
+      if (data.intervalId) clearInterval(data.intervalId);
+      if (data.context) data.context.close().catch(() => {});
+    }
+    speakingAnalyserRef.current.clear();
+    setSpeakingUserIds(new Set());
+
     for (const [, pc] of peersRef.current.entries()) {
       pc.close();
     }
@@ -82,6 +91,21 @@ export function VoiceProvider({ children }) {
       }
     };
 
+    const stopSpeakingDetection = (uid) => {
+      const data = speakingAnalyserRef.current.get(uid);
+      if (data) {
+        if (data.intervalId) clearInterval(data.intervalId);
+        if (data.context) data.context.close().catch(() => {});
+        speakingAnalyserRef.current.delete(uid);
+      }
+      setSpeakingUserIds((prev) => {
+        if (!prev.has(uid)) return prev;
+        const next = new Set(prev);
+        next.delete(uid);
+        return next;
+      });
+    };
+
     pc.ontrack = (e) => {
       if (e.track?.kind === 'video') {
         setRemoteScreenStreams((prev) => {
@@ -90,6 +114,38 @@ export function VoiceProvider({ children }) {
           if (!nextStream || (prevStream && prevStream.id === nextStream.id)) return prev;
           return { ...prev, [remoteUserId]: nextStream };
         });
+      }
+      if (e.track?.kind === 'audio') {
+        const stream = e.streams?.[0];
+        if (stream) {
+          try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const source = ctx.createMediaStreamSource(stream);
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.6;
+            source.connect(analyser);
+            const data = new Uint8Array(analyser.frequencyBinCount);
+            const SPEAK_THRESHOLD = 25;
+            const intervalId = setInterval(() => {
+              if (!peersRef.current.has(remoteUserId)) return;
+              analyser.getByteFrequencyData(data);
+              let sum = 0;
+              for (let i = 0; i < data.length; i++) sum += data[i];
+              const avg = data.length ? sum / data.length : 0;
+              const isSpeaking = avg > SPEAK_THRESHOLD;
+              setSpeakingUserIds((prev) => {
+                const has = prev.has(remoteUserId);
+                if (isSpeaking === has) return prev;
+                const next = new Set(prev);
+                if (isSpeaking) next.add(remoteUserId);
+                else next.delete(remoteUserId);
+                return next;
+              });
+            }, 100);
+            speakingAnalyserRef.current.set(remoteUserId, { intervalId, context: ctx });
+          } catch (_) {}
+        }
       }
       let audio = audioElementsRef.current.get(remoteUserId);
       if (!audio) {
@@ -103,6 +159,7 @@ export function VoiceProvider({ children }) {
 
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        stopSpeakingDetection(remoteUserId);
         pc.close();
         peersRef.current.delete(remoteUserId);
         setRemoteScreenStreams((prev) => {
@@ -320,6 +377,7 @@ export function VoiceProvider({ children }) {
     <VoiceContext.Provider value={{
       currentChannel,
       voiceMembers,
+      speakingUserIds,
       muted,
       deafened,
       sharingScreen,

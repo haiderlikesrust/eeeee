@@ -7,7 +7,7 @@ import { toPublicUser } from '../publicUser.js';
 import {
   Permissions, computeChannelPermissions, hasPermission,
 } from '../permissions.js';
-import { broadcastToChannel, GatewayIntents } from '../events.js';
+import { broadcastToChannel, broadcastToServer, GatewayIntents } from '../events.js';
 
 const router = Router();
 
@@ -93,6 +93,24 @@ router.get('/@me', botAuth, async (req, res) => {
   });
 });
 
+// PATCH /bot/@me - update bot's profile (avatar, banner)
+router.patch('/@me', botAuth, async (req, res) => {
+  const { avatar, profile } = req.body || {};
+  const botUser = await User.findById(req.bot._id);
+  if (!botUser) return res.status(404).json({ type: 'NotFound', error: 'Bot user not found' });
+  if (avatar != null) {
+    botUser.avatar = avatar;
+  }
+  if (profile != null && typeof profile === 'object' && profile.banner !== undefined) {
+    if (!botUser.profile || typeof botUser.profile !== 'object') botUser.profile = {};
+    botUser.profile.banner = profile.banner;
+    botUser.markModified('profile');
+  }
+  await botUser.save();
+  const updated = await User.findById(req.bot._id).lean();
+  res.json(toPublicUser(updated, { relationship: 'None', online: false }));
+});
+
 // GET /bot/gateway
 router.get('/gateway', botAuth, async (req, res) => {
   const host = req.headers.host || 'localhost:14702';
@@ -101,6 +119,52 @@ router.get('/gateway', botAuth, async (req, res) => {
     url: `${proto}://${host}/`,
     connect: `?bot_token=YOUR_BOT_TOKEN&intents=${GatewayIntents.GUILDS | GatewayIntents.GUILD_MESSAGES | GatewayIntents.MESSAGE_CONTENT}`,
     intents: GatewayIntents,
+  });
+});
+
+const PRESENCE_VALUES = new Set(['Online', 'Idle', 'Busy', 'Invisible']);
+
+// PATCH /bot/@me/status - set bot presence and/or custom status text
+router.patch('/@me/status', botAuth, async (req, res) => {
+  const { presence, text } = req.body || {};
+  const botUser = await User.findById(req.bot._id);
+  if (!botUser) return res.status(404).json({ type: 'NotFound', error: 'Bot user not found' });
+
+  if (!botUser.status || typeof botUser.status !== 'object') {
+    botUser.status = { presence: 'Online', text: null };
+  }
+  if (presence !== undefined) {
+    if (PRESENCE_VALUES.has(presence)) {
+      botUser.status.presence = presence;
+    }
+  }
+  if (text !== undefined) {
+    botUser.status.text = text == null || String(text).trim() === '' ? null : String(text).slice(0, 128);
+  }
+  botUser.markModified('status');
+  await botUser.save();
+
+  const memberships = await Member.find({ user: req.bot._id }).select('server').lean();
+  const serverIds = [...new Set(memberships.map((m) => m.server))];
+  for (const serverId of serverIds) {
+    await broadcastToServer(serverId, { type: 'PresenceUpdate', d: { user_id: req.bot._id, status: botUser.status } });
+  }
+
+  res.json({ status: botUser.status });
+});
+
+// GET /bot/channels/:target - channel info (e.g. server id for guild channels)
+router.get('/channels/:target', botAuth, async (req, res) => {
+  const ch = await Channel.findById(req.params.target).lean();
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+  res.json({
+    _id: ch._id,
+    server: ch.server || null,
+    channel_type: ch.channel_type,
+    name: ch.name || null,
+    description: ch.description || null,
   });
 });
 

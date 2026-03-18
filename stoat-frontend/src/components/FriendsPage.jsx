@@ -84,7 +84,7 @@ export default function FriendsPage() {
       {profileCard && (
         <>
           <div className="profile-card-backdrop" onClick={() => setProfileCard(null)} />
-          <ProfileCard user={profileCard.user} style={profileCard.style} />
+          <ProfileCard user={profileCard.user} style={profileCard.style} onClose={() => setProfileCard(null)} />
         </>
       )}
       <div className="chat-header friends-header">

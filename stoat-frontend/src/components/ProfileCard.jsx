@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useMobile } from '../context/MobileContext';
 import { get } from '../api';
 import { loadSystemBadgeMap } from '../utils/systemBadges';
 import './ProfileCard.css';
+
+const PROFILE_CARD_PORTAL_Z = 1100;
 
 function getProfile(user) {
   return user?.profile || {};
@@ -39,6 +43,7 @@ export default function ProfileCard({
 }) {
   const navigate = useNavigate();
   const { user: me } = useAuth();
+  const { isMobile } = useMobile();
   const p = getProfile(user);
   const [badgeMap, setBadgeMap] = useState({});
   const displayName = getDisplayName(user, member);
@@ -57,15 +62,17 @@ export default function ProfileCard({
       .sort((a, b) => (Number(b?.rank) || 0) - (Number(a?.rank) || 0));
     return resolved;
   })();
-
-  useEffect(() => {
-    let mounted = true;
-    loadSystemBadgeMap().then((map) => {
-      if (!mounted) return;
-      setBadgeMap(map || {});
-    });
-    return () => { mounted = false; };
-  }, []);
+  const isPopupCard = Boolean(style && (style.position === 'fixed' || style.left !== undefined || style.top !== undefined));
+  const isMobilePopup = Boolean(isMobile && isPopupCard);
+  const effectiveStyle = isMobilePopup
+    ? {
+      position: 'fixed',
+      left: '50%',
+      top: '50%',
+      transform: 'translate(-50%, -50%)',
+      zIndex: PROFILE_CARD_PORTAL_Z + 1,
+    }
+    : style;
 
   const openDm = async () => {
     if (!user?._id) return;
@@ -78,10 +85,20 @@ export default function ProfileCard({
     } catch {}
   };
 
-  return (
+  const cardContent = (
     <>
-      {showBackdrop && <div className="profile-card-backdrop" onClick={onClose} />}
-      <div className={`profile-card ${themeClass} ${className}`} style={style} onClick={(e) => e.stopPropagation()}>
+      {(showBackdrop || isMobilePopup) && (
+        <div
+          className="profile-card-backdrop"
+          onClick={onClose}
+          style={isMobilePopup ? { zIndex: PROFILE_CARD_PORTAL_Z, background: 'rgba(0,0,0,0.6)' } : undefined}
+        />
+      )}
+      <div
+        className={`profile-card ${themeClass} ${isMobilePopup ? 'popup-mobile' : ''} ${className}`}
+        style={effectiveStyle}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className={`profile-card-banner ${p.effect ? `effect-${p.effect}` : ''}`} style={getBannerStyle(user)} />
         <div className="profile-card-body">
           <div className={`profile-card-avatar-wrap ${p.decoration ? `decor-${p.decoration}` : ''}`}>
@@ -164,4 +181,27 @@ export default function ProfileCard({
       </div>
     </>
   );
+
+  useEffect(() => {
+    let mounted = true;
+    loadSystemBadgeMap().then((map) => {
+      if (!mounted) return;
+      setBadgeMap(map || {});
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  if (isMobilePopup) {
+    return createPortal(
+      <div
+        className="profile-card-portal"
+        style={{ position: 'fixed', inset: 0, zIndex: PROFILE_CARD_PORTAL_Z }}
+      >
+        {cardContent}
+      </div>,
+      document.body
+    );
+  }
+
+  return cardContent;
 }

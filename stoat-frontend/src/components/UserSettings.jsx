@@ -7,6 +7,36 @@ import { resolveFileUrl } from '../utils/avatarUrl';
 import ProfileCard from './ProfileCard';
 import './UserSettings.css';
 
+/** Custom dropdown so the open list uses our dark theme (native select list is OS-controlled and often white). */
+function SettingsSelect({ value, onChange, options, className = '' }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, []);
+  const current = options.find((o) => o.value === value);
+  const label = current ? current.label : value;
+  return (
+    <div className={`settings-select-wrap ${className}`} ref={ref}>
+      <button type="button" className="settings-select-btn" onClick={() => setOpen(!open)}>
+        <span>{label}</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" className="settings-select-chevron"><path fill="currentColor" d="M7 10l5 5 5-5z"/></svg>
+      </button>
+      {open && (
+        <ul className="settings-select-list">
+          {options.map((opt) => (
+            <li key={opt.value}>
+              <button type="button" className={`settings-select-option ${opt.value === value ? 'selected' : ''}`} onClick={() => { onChange(opt.value); setOpen(false); }}>{opt.label}</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function UserSettings({ onClose }) {
   const { user, setUser, logout } = useAuth();
   const navigate = useNavigate();
@@ -199,9 +229,9 @@ export default function UserSettings({ onClose }) {
           {tab === 'profile' && (
             <div className="settings-section">
               <h2>My Profile</h2>
-              <div className="profile-card">
+              <div className="profile-summary-card">
                 <div className="profile-banner" />
-                <div className="profile-card-body">
+                <div className="profile-summary-card-body">
                   <div className="profile-avatar-row">
                     <div className="profile-avatar-large clickable" onClick={() => avatarInputRef.current?.click()}>
                       {getAvatarUrl() ? (
@@ -252,12 +282,11 @@ export default function UserSettings({ onClose }) {
               </label>
               <label className="auth-label">
                 <span>STATUS</span>
-                <select value={presence} onChange={(e) => setPresence(e.target.value)} className="settings-select">
-                  <option value="Online">Online</option>
-                  <option value="Idle">Idle</option>
-                  <option value="Busy">Busy</option>
-                  <option value="Invisible">Invisible</option>
-                </select>
+                <SettingsSelect
+                  value={presence}
+                  onChange={setPresence}
+                  options={[{ value: 'Online', label: 'Online' }, { value: 'Idle', label: 'Idle' }, { value: 'Busy', label: 'Busy' }, { value: 'Invisible', label: 'Invisible' }]}
+                />
                 <input value={statusText} onChange={(e) => setStatusText(e.target.value)} placeholder="What are you up to?" />
               </label>
               <label className="auth-label">
@@ -280,13 +309,17 @@ export default function UserSettings({ onClose }) {
               <div className="settings-row-2">
                 <label className="auth-label">
                   <span>THEME PRESET</span>
-                  <select value={themePreset} onChange={(e) => setThemePreset(e.target.value)}>
-                    <option value="default">Default</option>
-                    <option value="midnight">Midnight</option>
-                    <option value="forest">Forest</option>
-                    <option value="sunset">Sunset</option>
-                    <option value="neon">Neon</option>
-                  </select>
+                  <SettingsSelect
+                    value={themePreset}
+                    onChange={setThemePreset}
+                    options={[
+                      { value: 'default', label: 'Default' },
+                      { value: 'midnight', label: 'Midnight' },
+                      { value: 'forest', label: 'Forest' },
+                      { value: 'sunset', label: 'Sunset' },
+                      { value: 'neon', label: 'Neon' },
+                    ]}
+                  />
                 </label>
                 <label className="auth-label">
                   <span>BANNER URL</span>
@@ -310,20 +343,19 @@ export default function UserSettings({ onClose }) {
               <div className="settings-row-2">
                 <label className="auth-label">
                   <span>AVATAR DECORATION</span>
-                  <select value={decoration} onChange={(e) => setDecoration(e.target.value)}>
-                    <option value="">None</option>
-                    <option value="ring">Ring</option>
-                    <option value="glow">Glow</option>
-                    <option value="sparkle">Sparkle</option>
-                  </select>
+                  <SettingsSelect
+                    value={decoration}
+                    onChange={setDecoration}
+                    options={[{ value: '', label: 'None' }, { value: 'ring', label: 'Ring' }, { value: 'glow', label: 'Glow' }, { value: 'sparkle', label: 'Sparkle' }]}
+                  />
                 </label>
                 <label className="auth-label">
                   <span>PROFILE EFFECT</span>
-                  <select value={effect} onChange={(e) => setEffect(e.target.value)}>
-                    <option value="">None</option>
-                    <option value="pulse">Pulse</option>
-                    <option value="shimmer">Shimmer</option>
-                  </select>
+                  <SettingsSelect
+                    value={effect}
+                    onChange={setEffect}
+                    options={[{ value: '', label: 'None' }, { value: 'pulse', label: 'Pulse' }, { value: 'shimmer', label: 'Shimmer' }]}
+                  />
                 </label>
               </div>
               <div className="settings-subhead">Social Links</div>

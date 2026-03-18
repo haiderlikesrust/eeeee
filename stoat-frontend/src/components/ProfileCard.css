@@ -6,6 +6,7 @@
 
 .profile-card {
   width: 360px;
+  max-width: calc(100vw - 16px);
   border-radius: 14px;
   background: var(--bg-floating);
   border: 1px solid var(--input-border);
@@ -261,4 +262,21 @@
 @keyframes sparkleOrbit {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+/* Mobile-friendly popup variant */
+.profile-card.popup-mobile {
+  width: min(360px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .profile-card-name-row {
+    flex-wrap: wrap;
+  }
+
+  .profile-card.popup-mobile .profile-card-body {
+    padding-bottom: 12px;
+  }
 }

@@ -17,6 +17,8 @@ export const GatewayEvents = {
   MESSAGE_REACTION_REMOVE: 'MESSAGE_REACTION_REMOVE',
   VOICE_READY: 'VoiceReady',
   VOICE_STATE_UPDATE: 'VoiceStateUpdate',
+  /** Fired when a user joins a server (via invite). data: { serverId, member: { user, roles, ... } } */
+  SERVER_MEMBER_JOIN: 'ServerMemberJoin',
 };
 
 function joinUrl(base, path) {
@@ -91,8 +93,40 @@ export class StoatBotClient extends EventEmitter {
     return this.api('GET', '/@me');
   }
 
+  /**
+   * Set bot presence and/or custom status text. Shown in the member list.
+   * @param {Object} opts
+   * @param {string} [opts.presence] - 'Online' | 'Idle' | 'Busy' | 'Invisible'
+   * @param {string} [opts.text] - Custom status line (e.g. "PumpKit Bundler"); empty string clears
+   * @returns {Promise<{ status: { presence, text } }>}
+   */
+  setStatus(opts = {}) {
+    const body = {};
+    if (opts.presence != null) body.presence = opts.presence;
+    if (opts.text != null) body.text = opts.text;
+    return this.api('PATCH', '/@me/status', Object.keys(body).length ? body : undefined);
+  }
+
+  /**
+   * Update bot profile (avatar and/or banner). Pass attachment objects from your upload flow.
+   * @param {Object} opts
+   * @param {Object} [opts.avatar] - Attachment object (e.g. { _id, url, ... }) to set as avatar
+   * @param {Object|null} [opts.banner] - Attachment object for banner, or null to remove
+   * @returns {Promise<Object>} Updated public user
+   */
+  setProfile(opts = {}) {
+    const body = {};
+    if (opts.avatar !== undefined) body.avatar = opts.avatar;
+    if (opts.banner !== undefined) body.profile = { banner: opts.banner };
+    return this.api('PATCH', '/@me', Object.keys(body).length ? body : undefined);
+  }
+
   getGateway() {
     return this.api('GET', '/gateway');
+  }
+
+  getChannel(channelId) {
+    return this.api('GET', `/channels/${channelId}`);
   }
 
   fetchMessages(channelId, { limit = 50 } = {}) {

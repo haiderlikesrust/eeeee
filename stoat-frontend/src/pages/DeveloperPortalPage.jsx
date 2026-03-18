@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { get, patch, post } from '../api';
+import { get, patch, post, uploadFile } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
@@ -39,6 +39,10 @@ function BotCard({
   const [saving, setSaving] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [revealedToken, setRevealedToken] = useState('');
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const avatarInputRef = useRef(null);
+  const bannerInputRef = useRef(null);
 
   useEffect(() => {
     setName(bot?.user?.username || '');
@@ -50,6 +54,40 @@ function BotCard({
   }, [bot]);
 
   const avatarUrl = resolveFileUrl(bot?.user?.avatar);
+  const bannerUrl = resolveFileUrl(bot?.user?.profile?.banner || bot?.user?.profile?.background);
+
+  const handleAvatarUpload = async (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file) return;
+    setAvatarUploading(true);
+    try {
+      const uploaded = await uploadFile(file);
+      await patch(`/bots/${bot._id}`, { avatar: uploaded });
+      toast.success('Avatar updated');
+      onUpdated();
+    } catch (err) {
+      toast.error(err?.error || 'Failed to update avatar');
+    }
+    setAvatarUploading(false);
+    if (avatarInputRef.current) avatarInputRef.current.value = '';
+  };
+
+  const handleBannerUpload = async (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file) return;
+    setBannerUploading(true);
+    try {
+      const uploaded = await uploadFile(file);
+      await patch(`/bots/${bot._id}`, { profile: { banner: uploaded } });
+      toast.success('Banner updated');
+      onUpdated();
+    } catch (err) {
+      toast.error(err?.error || 'Failed to update banner');
+    }
+    setBannerUploading(false);
+    if (bannerInputRef.current) bannerInputRef.current.value = '';
+  };
+
   const installableServers = useMemo(
     () => ownerServers.filter((s) => s && s._id),
     [ownerServers]
@@ -159,13 +197,61 @@ function BotCard({
   return (
     <div className="dev-bot-card">
       <div className="dev-bot-header">
-        <div className="dev-bot-avatar">
+        <div
+          className="dev-bot-avatar dev-bot-avatar-editable"
+          onClick={() => avatarInputRef.current?.click()}
+          title="Change avatar"
+        >
           {avatarUrl ? <img src={avatarUrl} alt="" /> : (bot?.user?.username?.[0] || 'B').toUpperCase()}
+          {avatarUploading && <span className="dev-bot-avatar-overlay">...</span>}
         </div>
+        <input
+          type="file"
+          accept="image/*"
+          ref={avatarInputRef}
+          style={{ display: 'none' }}
+          onChange={handleAvatarUpload}
+        />
         <div className="dev-bot-meta">
           <div className="dev-bot-name">{bot?.user?.username || 'Bot'}</div>
           <div className="dev-bot-id">{bot?._id}</div>
         </div>
+      </div>
+
+      <div className="dev-bot-section-label">Profile</div>
+      <div className="dev-bot-profile-row">
+        <div className="dev-bot-banner-preview" style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : {}}>
+          {bannerUploading && <span className="dev-bot-banner-overlay">Uploading...</span>}
+        </div>
+        <div className="dev-bot-banner-actions">
+          <button type="button" onClick={() => bannerInputRef.current?.click()} disabled={bannerUploading}>
+            {bannerUrl ? 'Change Banner' : 'Upload Banner'}
+          </button>
+          {bannerUrl && (
+            <button
+              type="button"
+              className="warn"
+              onClick={async () => {
+                try {
+                  await patch(`/bots/${bot._id}`, { profile: { banner: null } });
+                  toast.success('Banner removed');
+                  onUpdated();
+                } catch (err) {
+                  toast.error(err?.error || 'Failed to remove banner');
+                }
+              }}
+            >
+              Remove Banner
+            </button>
+          )}
+        </div>
+        <input
+          type="file"
+          accept="image/*"
+          ref={bannerInputRef}
+          style={{ display: 'none' }}
+          onChange={handleBannerUpload}
+        />
       </div>
 
       <div className="dev-grid">
@@ -306,6 +392,9 @@ export default function DeveloperPortalPage() {
           <div>
             <h1>Developer Portal</h1>
             <p>Create bots, configure intents, install into servers, and test with the SDK.</p>
+            <p style={{ marginTop: 6 }}>
+              <Link to="/developer/editor" className="dev-link-btn" style={{ marginRight: 8 }}>No-Code Bot Builder</Link>
+            </p>
           </div>
           <Link to="/channels/@me" className="dev-link-btn">Back to App</Link>
         </header>
@@ -370,6 +459,22 @@ export default function DeveloperPortalPage() {
               <pre className="dev-code">{`${String(lastCopiedToken).slice(0, 8)}${'•'.repeat(20)}${String(lastCopiedToken).slice(-6)}`}</pre>
             </>
           )}
+        </section>
+
+        <section className="dev-panel dev-deploy-panel">
+          <h2>Deploy</h2>
+          <p>Host your bot in the cloud and keep it running 24/7.</p>
+          <a
+            href="https://railway.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="dev-deploy-link"
+          >
+            <span className="dev-deploy-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24"><use href="/icons.svg#railway-icon" /></svg>
+            </span>
+            Deploy on Railway
+          </a>
         </section>
       </div>
     </div>
