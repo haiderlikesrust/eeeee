@@ -287,6 +287,7 @@ export default function ChatArea({ channelId, serverRoles }) {
   const inputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const typingSendRef = useRef(null);
+  const focusInputAfterSendRef = useRef(false);
 
   const canSend = hasPermission(perms, Permissions.SEND_MESSAGES);
   const canManageMessages = hasPermission(perms, Permissions.MANAGE_MESSAGES);
@@ -387,7 +388,7 @@ export default function ChatArea({ channelId, serverRoles }) {
       }
     });
     return () => { unsubStart(); unsubStop(); };
-  }, [channelId, user?._id, on]);
+  }, [channelId, user ? user._id : null, on]);
 
   useEffect(() => {
     return () => { setTypingUserIds(new Set()); };
@@ -419,7 +420,7 @@ export default function ChatArea({ channelId, serverRoles }) {
     if (!editingMsg && !showSearch && !showPinned) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages]);
+  }, [messages.length, editingMsg, showSearch, showPinned]);
 
   // Slowmode cooldown countdown
   useEffect(() => {
@@ -429,6 +430,17 @@ export default function ChatArea({ channelId, serverRoles }) {
     }, 1000);
     return () => clearInterval(timer);
   }, [slowmodeCooldown > 0]);
+
+  // Refocus message input after send (delayed so it runs after re-render, scroll, and layout)
+  useEffect(() => {
+    if (!uploading && focusInputAfterSendRef.current) {
+      focusInputAfterSendRef.current = false;
+      const id = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(id);
+    }
+  }, [uploading]);
 
   // Autocomplete logic (emoji :query and @mention)
   useEffect(() => {
@@ -550,6 +562,7 @@ export default function ChatArea({ channelId, serverRoles }) {
     } catch (err) {
       if (err?.retry_after) setSlowmodeCooldown(err.retry_after);
     }
+    focusInputAfterSendRef.current = true;
     setUploading(false);
   };
 
