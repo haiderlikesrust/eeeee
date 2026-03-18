@@ -1,0 +1,426 @@
+/* ── Page ── */
+.changelog-page {
+  min-height: 100vh;
+  background: var(--bg-tertiary);
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% 0%, var(--accent-glow), transparent),
+    radial-gradient(ellipse 60% 40% at 80% 80%, rgba(99, 102, 241, 0.06), transparent);
+}
+
+.changelog-container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 24px 80px;
+}
+
+/* ── Header ── */
+.changelog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 48px;
+}
+
+.changelog-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.changelog-logo {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.changelog-header h1 {
+  color: var(--header-primary);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.changelog-sub {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin: 2px 0 0;
+}
+
+.changelog-nav {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+
+.changelog-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  color: var(--text-normal);
+  background: var(--bg-secondary);
+  border: 1px solid var(--input-border);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.changelog-nav-btn:hover {
+  background: var(--bg-modifier-hover);
+  border-color: var(--text-muted);
+}
+
+.changelog-nav-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.changelog-nav-btn.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.changelog-nav-btn:focus-visible,
+.changelog-action-btn:focus-visible,
+.changelog-release-header:focus-visible,
+.changelog-back-top:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Expand / Collapse all ── */
+.changelog-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.changelog-action-btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--input-border);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.changelog-action-btn:hover {
+  color: var(--text-normal);
+  background: var(--bg-modifier-hover);
+}
+
+/* ── Timeline ── */
+.changelog-timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.changelog-release {
+  display: flex;
+  gap: 20px;
+}
+
+.changelog-dot-line {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 20px;
+  padding-top: 18px;
+}
+
+.changelog-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.changelog-dot.latest {
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.changelog-line {
+  width: 2px;
+  flex: 1;
+  background: var(--input-border);
+  margin-top: 4px;
+}
+
+/* ── Release card ── */
+.changelog-release-body {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 24px;
+  overflow: hidden;
+  transition: box-shadow 0.2s;
+}
+
+.changelog-release.expanded .changelog-release-body {
+  box-shadow: var(--shadow-sm), 0 0 24px color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+/* ── Release header (clickable) ── */
+.changelog-release-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 16px 20px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  transition: background 0.15s;
+}
+
+.changelog-release-header:hover {
+  background: var(--bg-modifier-hover);
+}
+
+.changelog-release-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.changelog-version {
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--header-primary);
+  white-space: nowrap;
+}
+
+.changelog-latest-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.changelog-title {
+  font-size: 15px;
+  color: var(--text-normal);
+  font-weight: 500;
+}
+
+.changelog-date {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.changelog-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+
+.changelog-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* ── Changes list ── */
+.changelog-changes {
+  list-style: none;
+  margin: 0;
+  padding: 0 20px 20px;
+  border-top: 1px solid var(--input-border);
+}
+
+.changelog-changes li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-normal);
+  border-bottom: 1px solid color-mix(in srgb, var(--input-border) 50%, transparent);
+}
+
+.changelog-changes li:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* ── Tags ── */
+.changelog-tag {
+  display: inline-block;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 1px;
+}
+
+.tag-new {
+  background: rgba(16, 185, 129, 0.14);
+  color: #34d399;
+}
+
+.tag-improved {
+  background: rgba(99, 102, 241, 0.14);
+  color: #818cf8;
+}
+
+.tag-fixed {
+  background: rgba(251, 191, 36, 0.14);
+  color: #fbbf24;
+}
+
+/* ── Mobile ── */
+@media (max-width: 640px) {
+  .changelog-container {
+    padding: 32px 16px 64px;
+  }
+
+  .changelog-header {
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+
+  .changelog-header h1 {
+    font-size: 22px;
+  }
+
+  .changelog-logo {
+    width: 32px;
+    height: 32px;
+  }
+
+  .changelog-release {
+    gap: 14px;
+  }
+
+  .changelog-release-header {
+    flex-wrap: wrap;
+    padding: 14px 16px;
+    gap: 6px;
+  }
+
+  .changelog-changes {
+    padding: 0 16px 16px;
+  }
+
+  .changelog-changes li {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .changelog-tag {
+    align-self: flex-start;
+  }
+
+  .changelog-actions {
+    margin-bottom: 16px;
+  }
+}
+
+/* ── Footer ── */
+.changelog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding-top: 48px;
+  margin-top: 24px;
+  border-top: 1px solid var(--input-border);
+}
+
+.changelog-back-top {
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--input-border);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.changelog-back-top:hover {
+  color: var(--text-normal);
+  background: var(--bg-modifier-hover);
+}
+
+.changelog-footer-link {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.changelog-footer-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Print ── */
+@media print {
+  .changelog-page {
+    background: #fff;
+    background-image: none;
+  }
+
+  .changelog-nav,
+  .changelog-actions,
+  .changelog-footer,
+  .changelog-chevron {
+    display: none !important;
+  }
+
+  .changelog-release-header {
+    cursor: default;
+  }
+
+  .changelog-release .changelog-release-body {
+    box-shadow: none;
+  }
+
+  .changelog-release.expanded .changelog-release-body {
+    box-shadow: none;
+  }
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .changelog-chevron,
+  .changelog-release-body,
+  .changelog-dot.latest {
+    transition: none;
+  }
+}

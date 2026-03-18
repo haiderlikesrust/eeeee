@@ -17,6 +17,14 @@ export default defineConfig({
         target: 'ws://localhost:14702',
         ws: true,
         rewrite: (path) => path.replace(/^\/ws/, ''),
+        configure: (proxy) => {
+          proxy.on('error', (err, _req, _res) => {
+            // ECONNRESET is normal when the backend or client closes the WebSocket (restart, tab close, etc.)
+            if (err.code !== 'ECONNRESET') {
+              console.error('[vite] ws proxy error:', err);
+            }
+          });
+        },
       },
       '/attachments': {
         target: 'http://localhost:14702',

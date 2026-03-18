@@ -1,5 +1,7 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
 import { useWS } from './WebSocketContext';
+import { useAuth } from './AuthContext';
+import { playSelfJoin, playSelfLeave, playOtherJoin, playOtherLeave } from '../utils/voiceSounds';
 
 const VoiceContext = createContext(null);
 
@@ -10,7 +12,12 @@ const ICE_SERVERS = [
 
 export function VoiceProvider({ children }) {
   const { on, send } = useWS();
+  const { user } = useAuth();
   const [currentChannel, setCurrentChannel] = useState(null);
+  const currentChannelIdRef = useRef(null);
+  const userIdRef = useRef(null);
+  currentChannelIdRef.current = currentChannel?.id ?? null;
+  userIdRef.current = user?._id ?? null;
   const [voiceMembers, setVoiceMembers] = useState({});
   const [muted, setMuted] = useState(false);
   const [deafened, setDeafened] = useState(false);
@@ -28,6 +35,7 @@ export function VoiceProvider({ children }) {
   const audioElementsRef = useRef(new Map());
   const audioStreamsRef = useRef(new Map()); // remoteUserId -> MediaStream for playback (keeps all received audio tracks)
   const speakingAnalyserRef = useRef(new Map()); // remoteUserId -> { intervalId, context }
+  const screenStreamIdsRef = useRef(new Set()); // stream IDs that are screen shares (not camera)
 
   const cleanup = useCallback(() => {
     for (const [, data] of speakingAnalyserRef.current.entries()) {
@@ -68,20 +76,36 @@ export function VoiceProvider({ children }) {
     setRemoteCameraStreams({});
   }, []);
 
-  const renegotiatePeer = useCallback((remoteUserId, channelId) => {
+  const renegotiatePeer = useCallback(async (remoteUserId, channelId) => {
     const pc = peersRef.current.get(remoteUserId);
-    if (!pc || pc.signalingState === 'closed' || pc.signalingState !== 'stable') return;
-    pc.createOffer()
-      .then((offer) => pc.setLocalDescription(offer).then(() => offer))
-      .then((offer) => {
-        send({
-          type: 'VoiceSignal',
-          targetUserId: remoteUserId,
-          channelId,
-          signal: { type: 'offer', sdp: offer },
-        });
-      })
-      .catch(() => {});
+    if (!pc || pc.signalingState === 'closed') return;
+    // Wait for stable state before creating an offer (up to 2s)
+    if (pc.signalingState !== 'stable') {
+      await new Promise((resolve) => {
+        const timeout = setTimeout(resolve, 2000);
+        const check = () => {
+          if (pc.signalingState === 'stable' || pc.signalingState === 'closed') {
+            clearTimeout(timeout);
+            resolve();
+          }
+        };
+        pc.addEventListener('signalingstatechange', check);
+        setTimeout(() => pc.removeEventListener('signalingstatechange', check), 2100);
+      });
+      if (pc.signalingState !== 'stable') return;
+    }
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      send({
+        type: 'VoiceSignal',
+        targetUserId: remoteUserId,
+        channelId,
+        signal: { type: 'offer', sdp: offer },
+      });
+    } catch (err) {
+      console.warn('[Voice] renegotiation failed:', err);
+    }
   }, [send]);
 
   const createPeerConnection = useCallback((remoteUserId, channelId, isInitiator) => {
@@ -118,17 +142,42 @@ export function VoiceProvider({ children }) {
       });
     };
 
+    const receivedVideoStreamIds = new Set();
+
     pc.ontrack = (e) => {
       if (e.track?.kind === 'video') {
         const track = e.track;
-        const nextStream = e.streams?.[0];
-        const isCamera = track.label === 'camera';
-        const setRemote = isCamera ? setRemoteCameraStreams : setRemoteScreenStreams;
-        setRemote((prev) => {
-          const prevStream = prev[remoteUserId];
-          if (!nextStream || (prevStream && prevStream.id === nextStream.id)) return prev;
-          return { ...prev, [remoteUserId]: nextStream };
-        });
+        let nextStream = e.streams?.[0];
+        if (!nextStream) {
+          nextStream = new MediaStream();
+          nextStream.addTrack(track);
+        }
+        // Distinguish camera vs screen: the first video stream is screen share
+        // (since screen share is the most common added-via-renegotiation track).
+        // We treat ALL incoming video as screen share by default.
+        // Camera tracks from the sender have a known stream ID we track separately.
+        const streamId = nextStream.id;
+        const alreadySeen = receivedVideoStreamIds.has(streamId);
+        receivedVideoStreamIds.add(streamId);
+
+        // Heuristic: if track settings suggest a display surface, it's screen share.
+        // Otherwise if we already have a screen stream for this user, new one is camera.
+        const settings = track.getSettings?.() || {};
+        const isDisplaySurface = settings.displaySurface != null;
+        const isCamera = !isDisplaySurface && !alreadySeen &&
+          Object.keys(remoteCameraStreams).length === 0;
+
+        if (isCamera) {
+          setRemoteCameraStreams((prev) => {
+            if (prev[remoteUserId]?.id === streamId) return prev;
+            return { ...prev, [remoteUserId]: nextStream };
+          });
+        } else {
+          setRemoteScreenStreams((prev) => {
+            if (prev[remoteUserId]?.id === streamId) return prev;
+            return { ...prev, [remoteUserId]: nextStream };
+          });
+        }
       }
       if (e.track?.kind === 'audio') {
         const track = e.track;
@@ -217,13 +266,11 @@ export function VoiceProvider({ children }) {
     }
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach((track) => {
-        track.label = 'screen';
         pc.addTrack(track, screenStreamRef.current);
       });
     }
     if (cameraStreamRef.current) {
       cameraStreamRef.current.getTracks().forEach((track) => {
-        track.label = 'camera';
         pc.addTrack(track, cameraStreamRef.current);
       });
     }
@@ -259,9 +306,11 @@ export function VoiceProvider({ children }) {
 
     setCurrentChannel({ id: channelId, name: channelName, serverId, serverName });
     send({ type: 'VoiceJoin', channelId });
+    playSelfJoin();
   }, [currentChannel, send, cleanup]);
 
   const leaveVoice = useCallback(() => {
+    playSelfLeave();
     send({ type: 'VoiceLeave' });
     cleanup();
     setCurrentChannel(null);
@@ -293,17 +342,20 @@ export function VoiceProvider({ children }) {
         audio: false,
       });
       screenStreamRef.current = displayStream;
+      screenStreamIdsRef.current.add(displayStream.id);
       setSharingScreen(true);
 
       const [screenTrack] = displayStream.getVideoTracks();
       if (screenTrack) {
-        screenTrack.label = 'screen';
         screenTrack.onended = () => stopScreenShare();
       }
       for (const [remoteUserId, pc] of peersRef.current.entries()) {
         if (pc.signalingState === 'closed') continue;
         displayStream.getTracks().forEach((track) => pc.addTrack(track, displayStream));
-        renegotiatePeer(remoteUserId, currentChannel.id);
+      }
+      await new Promise((r) => setTimeout(r, 100));
+      for (const [remoteUserId] of peersRef.current.entries()) {
+        await renegotiatePeer(remoteUserId, currentChannel.id);
       }
     } catch {}
   }, [currentChannel, sharingScreen, stopScreenShare, renegotiatePeer]);
@@ -333,11 +385,12 @@ export function VoiceProvider({ children }) {
       cameraStreamRef.current = stream;
       setCameraOn(true);
 
-      stream.getVideoTracks().forEach((t) => { t.label = 'camera'; });
-
       for (const [remoteUserId, pc] of peersRef.current.entries()) {
         if (pc.signalingState === 'closed') continue;
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      for (const [remoteUserId] of peersRef.current.entries()) {
         renegotiatePeer(remoteUserId, currentChannel.id);
       }
     } catch {}
@@ -395,6 +448,12 @@ export function VoiceProvider({ children }) {
     const unsubState = on('VoiceStateUpdate', (data) => {
       if (!data) return;
       const members = data.members || [];
+      const isMyChannel = data.channelId === currentChannelIdRef.current;
+      const isSomeoneElse = data.userId && data.userId !== userIdRef.current;
+      if (isMyChannel && isSomeoneElse) {
+        if (data.action === 'join') playOtherJoin();
+        else if (data.action === 'leave') playOtherLeave();
+      }
       setVoiceMembers((prev) => ({
         ...prev,
         [data.channelId]: members,
@@ -429,31 +488,35 @@ export function VoiceProvider({ children }) {
       }
     });
 
-    const unsubSignal = on('VoiceSignal', (data) => {
+    const unsubSignal = on('VoiceSignal', async (data) => {
       if (!data) return;
       const { fromUserId, signal, channelId } = data;
 
       if (signal.type === 'offer') {
-        // Use existing peer only when stable (e.g. renegotiation after they started screen share).
-        // Creating a new PC on every offer would break the connection and drop audio.
         let pc = peersRef.current.get(fromUserId);
-        if (!pc || pc.signalingState === 'closed' || pc.signalingState !== 'stable') {
+        if (!pc || pc.signalingState === 'closed') {
           pc = createPeerConnection(fromUserId, channelId, false);
         }
-        pc.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
-          return pc.createAnswer();
-        }).then((answer) => {
-          pc.setLocalDescription(answer);
+        try {
+          // Rollback our own offer if we're in have-local-offer (glare)
+          if (pc.signalingState === 'have-local-offer') {
+            await pc.setLocalDescription({ type: 'rollback' });
+          }
+          await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
           send({
             type: 'VoiceSignal',
             targetUserId: fromUserId,
             channelId,
             signal: { type: 'answer', sdp: answer },
           });
-        }).catch(() => {});
+        } catch (err) {
+          console.warn('[Voice] failed to handle offer:', err);
+        }
       } else if (signal.type === 'answer') {
         const pc = peersRef.current.get(fromUserId);
-        if (pc) {
+        if (pc && pc.signalingState === 'have-local-offer') {
           pc.setRemoteDescription(new RTCSessionDescription(signal.sdp)).catch(() => {});
         }
       } else if (signal.type === 'ice-candidate') {

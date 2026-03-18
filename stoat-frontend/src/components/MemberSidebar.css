@@ -20,6 +20,35 @@
   letter-spacing: 0.06em;
 }
 
+.member-category-offline {
+  color: var(--text-muted);
+  opacity: 0.9;
+}
+
+/* Discord-style dimmed offline members */
+.member-item-offline .member-item {
+  opacity: 0.5;
+  transition: opacity var(--transition-fast);
+}
+
+.member-item-offline .member-avatar,
+.member-item-offline .member-avatar-img {
+  filter: grayscale(40%);
+}
+
+.member-item-offline .member-name {
+  color: var(--text-muted);
+}
+
+.member-item-offline:hover .member-item {
+  opacity: 0.85;
+}
+
+.member-item-offline:hover .member-avatar,
+.member-item-offline:hover .member-avatar-img {
+  filter: grayscale(15%);
+}
+
 .member-item-wrap {
   position: static;
 }

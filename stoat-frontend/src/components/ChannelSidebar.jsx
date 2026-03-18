@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useWS } from '../context/WebSocketContext';
 import { useVoice } from '../context/VoiceContext';
@@ -145,6 +145,9 @@ export default function ChannelSidebar({ type, server, channels, serverId, dms, 
               </div>
             </>
           )}
+          <div className="channel-category channel-changelog-wrap">
+            <Link to="/changelog" className="channel-changelog-link" onClick={() => closeMobileOverlay?.()}>Changelog</Link>
+          </div>
         </div>
         {profileCard && (
           <>
@@ -410,13 +413,26 @@ export default function ChannelSidebar({ type, server, channels, serverId, dms, 
         <div className="modal-overlay" onClick={() => { setShowInvite(false); setInviteCode(''); }}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h2>Invite Friends</h2>
-            <p className="modal-sub">Share this invite code with others to grant access to <strong>{server?.name}</strong></p>
+            <p className="modal-sub">Share this invite link with others to grant access to <strong>{server?.name}</strong></p>
             {inviteLoading ? (
               <p style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Creating invite...</p>
             ) : inviteCode ? (
               <div className="invite-code-box">
-                <input className="invite-code-input" value={inviteCode} readOnly onClick={(e) => e.target.select()} />
-                <button className="modal-btn primary" onClick={() => { navigator.clipboard.writeText(inviteCode); }}>Copy</button>
+                <input
+                  className="invite-code-input"
+                  value={typeof window !== 'undefined' ? `${window.location.origin}/invite/${inviteCode}` : inviteCode}
+                  readOnly
+                  onClick={(e) => e.target.select()}
+                />
+                <button
+                  className="modal-btn primary"
+                  onClick={() => {
+                    const link = typeof window !== 'undefined' ? `${window.location.origin}/invite/${inviteCode}` : inviteCode;
+                    navigator.clipboard.writeText(link);
+                  }}
+                >
+                  Copy link
+                </button>
               </div>
             ) : (
               <p style={{ textAlign: 'center', color: 'var(--red-400)' }}>Failed to create invite</p>

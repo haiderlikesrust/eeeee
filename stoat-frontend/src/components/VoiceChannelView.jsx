@@ -30,6 +30,15 @@ export default function VoiceChannelView({ channel }) {
   const { user } = useAuth();
   const { isMobile, openChannelSidebar, openMemberSidebar } = useMobile();
   const [memberUsers, setMemberUsers] = useState({});
+  const [expandedScreenUserId, setExpandedScreenUserId] = useState(null);
+  const [focusedScreenUserId, setFocusedScreenUserId] = useState(null);
+
+  useEffect(() => {
+    if (expandedScreenUserId == null) return;
+    const onKey = (e) => { if (e.key === 'Escape') setExpandedScreenUserId(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expandedScreenUserId]);
 
   const isConnected = currentChannel?.id === channel?._id;
   const membersInChannel = voiceMembers?.[channel?._id] || [];
@@ -58,6 +67,16 @@ export default function VoiceChannelView({ channel }) {
   const myScreenTile = isConnected && localScreenStream ? [{ userId: user?._id, stream: localScreenStream, isMe: true }] : [];
   const remoteScreenTiles = Object.entries(remoteScreenStreams || {}).map(([uid, stream]) => ({ userId: uid, stream, isMe: uid === user?._id }));
   const screenTiles = [...myScreenTile, ...remoteScreenTiles.filter((t) => t.userId !== user?._id)];
+  const focusedTile = screenTiles.find((t) => t.userId === focusedScreenUserId) || screenTiles[0];
+  const screenTileIds = screenTiles.map((t) => t.userId).join(',');
+
+  useEffect(() => {
+    if (screenTiles.length === 0) setFocusedScreenUserId(null);
+    else setFocusedScreenUserId((prev) => {
+      if (prev && screenTiles.some((t) => t.userId === prev)) return prev;
+      return screenTiles[0]?.userId ?? null;
+    });
+  }, [screenTileIds, screenTiles.length]);
 
   const myCameraTile = isConnected && cameraOn && localCameraStream ? [{ userId: user?._id, stream: localCameraStream, isMe: true }] : [];
   const remoteCameraTiles = Object.entries(remoteCameraStreams || {}).map(([uid, stream]) => ({ userId: uid, stream, isMe: uid === user?._id }));
@@ -97,16 +116,64 @@ export default function VoiceChannelView({ channel }) {
             </div>
           )}
           {screenTiles.length > 0 && (
-            <div className="voice-screen-grid">
-              {screenTiles.map((tile) => (
-                <VideoTile
-                  key={`screen-${tile.userId}`}
-                  stream={tile.stream}
-                  label={`${memberUsers[tile.userId]?.display_name || memberUsers[tile.userId]?.username || (tile.isMe ? 'You' : tile.userId?.slice(0, 8) || 'User')}${tile.isMe ? ' (You)' : ''}`}
-                />
-              ))}
+            <div className={`voice-screen-wrap${screenTiles.length === 1 ? ' voice-screen-wrap-single' : ' voice-screen-wrap-multi'}`}>
+              <div className="voice-screen-main">
+                {focusedTile && (
+                  <div className="voice-screen-focused">
+                    <VideoTile
+                      key={`screen-focused-${focusedTile.userId}`}
+                      stream={focusedTile.stream}
+                      label={`${memberUsers[focusedTile.userId]?.display_name || memberUsers[focusedTile.userId]?.username || (focusedTile.isMe ? 'You' : focusedTile.userId?.slice(0, 8) || 'User')}${focusedTile.isMe ? ' (You)' : ''}`}
+                      isScreen
+                      onExpand={focusedTile.isMe ? undefined : () => setExpandedScreenUserId(focusedTile.userId)}
+                      expandTitle="Expand for viewer"
+                    />
+                  </div>
+                )}
+              </div>
+              {screenTiles.length > 1 && (
+                <div className="voice-screen-thumbnails">
+                  {screenTiles.map((tile) => (
+                    <button
+                      key={`screen-thumb-${tile.userId}`}
+                      type="button"
+                      className={`voice-screen-thumb ${tile.userId === focusedScreenUserId ? 'focused' : ''}`}
+                      onClick={() => setFocusedScreenUserId(tile.userId)}
+                      title={`View ${memberUsers[tile.userId]?.display_name || memberUsers[tile.userId]?.username || 'screen'}'s share`}
+                    >
+                      <ScreenThumbVideo stream={tile.stream} />
+                      <span className="voice-screen-thumb-label">
+                        {memberUsers[tile.userId]?.display_name || memberUsers[tile.userId]?.username || (tile.isMe ? 'You' : tile.userId?.slice(0, 8) || 'User')}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
+          {expandedScreenUserId != null && (() => {
+            const tile = screenTiles.find((t) => t.userId === expandedScreenUserId);
+            if (!tile) return null;
+            const name = memberUsers[tile.userId]?.display_name || memberUsers[tile.userId]?.username || tile.userId?.slice(0, 8) || 'Screen';
+            return (
+              <div className="voice-screen-overlay" role="dialog" aria-label={`${name}'s shared screen (expanded view)`}>
+                <div className="voice-screen-overlay-backdrop" onClick={() => setExpandedScreenUserId(null)} />
+                <div className="voice-screen-overlay-content">
+                  <div className="voice-screen-overlay-header">
+                    <span className="voice-screen-overlay-title">{name}&apos;s screen</span>
+                    <button type="button" className="voice-screen-overlay-close" onClick={() => setExpandedScreenUserId(null)} title="Close expanded view">
+                      <svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+                    </button>
+                  </div>
+                  <div className="voice-screen-overlay-video-wrap">
+                    <ScreenShareVideo stream={tile.stream} />
+                  </div>
+                  <p className="voice-screen-overlay-hint">Click outside or press Escape to close</p>
+                </div>
+              </div>
+            );
+          })()}
+
           {membersInChannel.length === 0 && !isConnected && (
             <div className="voice-empty">
               <div className="voice-empty-icon">
@@ -119,6 +186,8 @@ export default function VoiceChannelView({ channel }) {
             </div>
           )}
 
+          {membersInChannel.length > 0 && (
+          <div className="voice-participants-row">
           {membersInChannel.map((uid) => {
             const u = memberUsers[uid] || { _id: uid };
             const avatarUrl = getAvatarUrl(u);
@@ -148,6 +217,8 @@ export default function VoiceChannelView({ channel }) {
               </div>
             );
           })}
+        </div>
+          )}
         </div>
       </div>
 
@@ -212,7 +283,7 @@ export default function VoiceChannelView({ channel }) {
   );
 }
 
-function VideoTile({ stream, label, isCamera }) {
+function VideoTile({ stream, label, isCamera, isScreen, onExpand, expandTitle }) {
   const ref = useRef(null);
   useEffect(() => {
     if (ref.current) {
@@ -224,6 +295,28 @@ function VideoTile({ stream, label, isCamera }) {
     <div className={className}>
       <video ref={ref} autoPlay playsInline muted className="voice-screen-video" />
       <div className="voice-screen-label">{label}</div>
+      {isScreen && onExpand && (
+        <button type="button" className="voice-screen-expand-btn" onClick={onExpand} title={expandTitle || 'Expand'} aria-label={expandTitle || 'Expand screen share'}>
+          <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+          <span>Expand</span>
+        </button>
+      )}
     </div>
   );
+}
+
+function ScreenShareVideo({ stream }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream || null;
+  }, [stream]);
+  return <video ref={ref} autoPlay playsInline muted className="voice-screen-overlay-video" />;
+}
+
+function ScreenThumbVideo({ stream }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream || null;
+  }, [stream]);
+  return <video ref={ref} autoPlay playsInline muted className="voice-screen-thumb-video" />;
 }

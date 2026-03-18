@@ -1,0 +1,126 @@
+.invite-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  padding: 24px;
+}
+
+.invite-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-secondary);
+  border-radius: 16px;
+  padding: 32px;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.invite-card-error .invite-title {
+  color: var(--text-muted);
+}
+
+.invite-loading {
+  text-align: center;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.invite-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--header-primary);
+  margin: 0 0 8px;
+  text-align: center;
+}
+
+.invite-sub {
+  font-size: 14px;
+  color: var(--text-muted);
+  text-align: center;
+  margin: 0 0 20px;
+}
+
+.invite-server-name {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--header-primary);
+  text-align: center;
+  margin: 0 0 24px;
+}
+
+.invite-locked {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.invite-locked-icon {
+  font-size: 48px;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.invite-locked p {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--header-primary);
+}
+
+.invite-locked-sub {
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  color: var(--text-muted) !important;
+  margin-top: 4px !important;
+}
+
+.invite-actions {
+  text-align: center;
+  margin-top: 8px;
+}
+
+.invite-login-prompt {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0 0 16px;
+}
+
+.invite-btn {
+  display: inline-block;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast), opacity var(--transition-fast);
+}
+
+.invite-btn.primary {
+  background: var(--accent, #3ba55d);
+  color: #fff;
+}
+
+.invite-btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover, #2d8d4a);
+}
+
+.invite-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.invite-back {
+  display: block;
+  text-align: center;
+  margin-top: 20px;
+  font-size: 14px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.invite-back:hover {
+  color: var(--header-primary);
+}

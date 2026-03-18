@@ -26,27 +26,35 @@
 .voice-view-body {
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
   overflow: auto;
   padding: 24px;
+  min-height: 0;
 }
 
 .voice-view-grid {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  flex: 1;
   gap: 20px;
-  justify-content: center;
-  align-items: center;
-  max-width: 1100px;
+  justify-content: flex-start;
+  align-items: stretch;
+  max-width: 100%;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  min-height: 0;
 }
+
 
 .voice-camera-grid {
   width: 100%;
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
-  margin-bottom: 16px;
 }
 
 .voice-camera-tile {
@@ -57,14 +65,116 @@
 
 .voice-camera-tile .voice-screen-video {
   min-height: 120px;
+  object-fit: cover;
 }
 
-.voice-screen-grid {
+/* Screen share area: main content takes most space */
+.voice-screen-wrap {
   width: 100%;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 14px;
-  margin-bottom: 14px;
+  min-width: 0;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.voice-screen-main {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.voice-screen-focused {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  overflow: hidden;
+}
+
+.voice-screen-focused .voice-screen-tile {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.voice-screen-focused .voice-screen-video {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* Single screen share: ensure big minimum */
+.voice-screen-wrap-single .voice-screen-main {
+  min-height: min(75vh, 580px);
+}
+
+/* Multiple: thumbnails strip below */
+.voice-screen-thumbnails {
+  flex-shrink: 0;
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  overflow-x: auto;
+}
+
+.voice-screen-thumb {
+  flex-shrink: 0;
+  width: 160px;
+  height: 90px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #111;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.voice-screen-thumb:hover {
+  border-color: var(--text-muted);
+}
+
+.voice-screen-thumb.focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.voice-screen-thumb-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.voice-screen-thumb-label {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 .voice-screen-tile {
@@ -73,14 +183,20 @@
   overflow: hidden;
   background: #111;
   border: 1px solid var(--border);
-  min-height: 190px;
+  min-height: 200px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .voice-screen-video {
   width: 100%;
+  max-width: 100%;
   height: 100%;
-  min-height: 190px;
-  object-fit: cover;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  object-fit: contain;
   display: block;
 }
 
@@ -94,6 +210,130 @@
   font-weight: 600;
   padding: 5px 8px;
   border-radius: 8px;
+}
+
+.voice-screen-expand-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.voice-screen-expand-btn:hover {
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.voice-screen-expand-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Expanded screen share overlay (for viewer) ── */
+.voice-screen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.voice-screen-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  cursor: pointer;
+}
+
+.voice-screen-overlay-content {
+  position: relative;
+  width: 100%;
+  max-width: 95vw;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: #0c0c0c;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+}
+
+.voice-screen-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.5);
+  flex-shrink: 0;
+}
+
+.voice-screen-overlay-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--header-primary);
+}
+
+.voice-screen-overlay-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-normal);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.voice-screen-overlay-close:hover {
+  background: var(--bg-modifier-hover);
+}
+
+.voice-screen-overlay-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.voice-screen-overlay-video-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
+.voice-screen-overlay-video {
+  width: 100%;
+  height: 100%;
+  max-height: 85vh;
+  object-fit: contain;
+  display: block;
+}
+
+.voice-screen-overlay-hint {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .voice-empty {

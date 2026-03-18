@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import './Auth.css';
 
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirect = searchParams.get('redirect');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -17,7 +19,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate('/channels/@me');
+      navigate(redirect && redirect.startsWith('/') ? redirect : '/channels/@me');
     } catch (err) {
       setError(err.error || 'Login failed');
     }
@@ -29,7 +31,7 @@ export default function LoginPage() {
       <form className="auth-box" onSubmit={handleSubmit}>
         <div className="auth-header">
           <h1>Welcome back</h1>
-          <p>Sign in to continue to Stoat</p>
+          <p>Sign in to continue to Opic</p>
         </div>
         {error && <div className="auth-error">{error}</div>}
         <label className="auth-label">
@@ -48,6 +50,9 @@ export default function LoginPage() {
         </p>
         <p className="auth-footer">
           App staff? <Link to="/admin">Open Admin Panel</Link>
+        </p>
+        <p className="auth-footer">
+          <Link to="/changelog">Changelog</Link>
         </p>
       </form>
     </div>

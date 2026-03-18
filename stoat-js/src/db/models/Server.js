@@ -33,6 +33,7 @@ const serverSchema = new mongoose.Schema({
   banner: fileSchema,
   flags: Number,
   nsfw: { type: Boolean, default: false },
+  locked: { type: Boolean, default: false },
 }, { id: false });
 
 export default mongoose.model('Server', serverSchema);

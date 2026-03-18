@@ -164,7 +164,7 @@ function ChatView() {
 function ServerView({ servers, setServers, addServer, removeServer }) {
   const { serverId } = useParams();
   const navigate = useNavigate();
-  const { on } = useWS();
+  const { on, connected } = useWS();
   const [server, setServer] = useState(null);
   const [channels, setChannels] = useState([]);
   const [members, setMembers] = useState([]);
@@ -187,9 +187,22 @@ function ServerView({ servers, setServers, addServer, removeServer }) {
   }, [loadServer]);
 
   useEffect(() => {
-    if (!on || !serverId) return;
-    const unsubPresence = on('PresenceUpdate', () => {
+    if (connected && serverId) {
       get(`/servers/${serverId}/members`).then((m) => setMembers(m || [])).catch(() => {});
+    }
+  }, [connected, serverId]);
+
+  useEffect(() => {
+    if (!on || !serverId) return;
+    let presenceTimer = null;
+    const unsubPresence = on('PresenceUpdate', (d) => {
+      const eventServerId = d?.server_id;
+      if (eventServerId != null && String(eventServerId) !== String(serverId)) return;
+      if (presenceTimer) clearTimeout(presenceTimer);
+      presenceTimer = setTimeout(() => {
+        presenceTimer = null;
+        get(`/servers/${serverId}/members`).then((m) => setMembers(m || [])).catch(() => {});
+      }, 280);
     });
     const unsub1 = on('ServerMemberJoin', (data) => {
       if (data.serverId === serverId && data.member) {
@@ -207,7 +220,12 @@ function ServerView({ servers, setServers, addServer, removeServer }) {
         }));
       }
     });
-    return () => { unsubPresence(); unsub1(); unsub2(); };
+    return () => {
+      if (presenceTimer) clearTimeout(presenceTimer);
+      unsubPresence();
+      unsub1();
+      unsub2();
+    };
   }, [on, serverId]);
 
   const handleChannelCreated = (ch) => {

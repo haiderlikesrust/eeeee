@@ -90,6 +90,24 @@
   opacity: 1;
 }
 
+.channel-changelog-wrap {
+  padding: 12px 8px 8px 4px;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.channel-changelog-link {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.channel-changelog-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .channel-item {
   display: flex;
   align-items: center;

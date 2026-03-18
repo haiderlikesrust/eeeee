@@ -150,6 +150,7 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const [tab, setTab] = useState(uniqueTabs[0] || 'overview');
   const [name, setName] = useState(server?.name || '');
   const [description, setDescription] = useState(server?.description || '');
+  const [locked, setLocked] = useState(server?.locked ?? false);
   const [roles, setRoles] = useState([]);
   const [bans, setBans] = useState([]);
   const [invites, setInvites] = useState([]);
@@ -192,6 +193,10 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
     setIconUploading(false);
     if (iconInputRef.current) iconInputRef.current.value = '';
   };
+
+  useEffect(() => {
+    if (server?.locked != null) setLocked(server.locked);
+  }, [server?.locked]);
 
   useEffect(() => {
     if (tab === 'roles') fetchRoles();
@@ -273,8 +278,11 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const saveOverview = async () => {
     setSaving(true);
     try {
-      const updated = await patch(`/servers/${serverId}`, { name, description });
+      const payload = { name, description };
+      if (isOwner) payload.locked = locked;
+      const updated = await patch(`/servers/${serverId}`, payload);
       if (onUpdated) onUpdated(updated);
+      setLocked(updated.locked ?? false);
       toast.success('Server settings saved');
     } catch (err) {
       toast.error(getErrMsg(err, 'Failed to save server settings'));
@@ -493,6 +501,24 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
               </div>
               <label className="auth-label"><span>SERVER NAME</span><input value={name} onChange={(e) => setName(e.target.value)} /></label>
               <label className="auth-label"><span>DESCRIPTION</span><textarea className="settings-textarea" value={description} onChange={(e) => setDescription(e.target.value)} rows={4} /></label>
+              {isOwner && (
+                <div className="settings-toggle-row">
+                  <div className="settings-toggle-info">
+                    <span className="settings-toggle-label">Lock server</span>
+                    <span className="settings-toggle-desc">No new members can join, even with an invite link.</span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`perm-toggle ${locked ? 'on' : 'off'}`}
+                    onClick={() => setLocked((v) => !v)}
+                    title={locked ? 'Unlock server' : 'Lock server'}
+                  >
+                    <div className="perm-toggle-track">
+                      <div className="perm-toggle-thumb" />
+                    </div>
+                  </button>
+                </div>
+              )}
               <button className="modal-btn primary" onClick={saveOverview} disabled={saving}>{saving ? 'Saving...' : 'Save Changes'}</button>
             </div>
           )}

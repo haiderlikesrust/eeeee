@@ -100,11 +100,15 @@ export default function MemberSidebar({ members, serverRoles }) {
     return 0;
   });
 
-  // Group by highest hoisted role (Discord-style role separation)
+  const onlineMembers = members.filter(isOnlineMember);
+  const offlineMembers = members.filter((m) => !isOnlineMember(m));
+  const sortedOffline = sortMembersByName(offlineMembers);
+
+  // Group by highest hoisted role (online members only in role sections)
   const roleGroups = {};
   const ungrouped = [];
 
-  for (const m of members) {
+  for (const m of onlineMembers) {
     const hoisted = getHoistedRole(m);
     if (hoisted) {
       const key = hoisted._id || hoisted.name;
@@ -117,7 +121,8 @@ export default function MemberSidebar({ members, serverRoles }) {
 
   const sortedGroups = Object.values(roleGroups)
     .sort((a, b) => (Number(b.role.rank) || 0) - (Number(a.role.rank) || 0))
-    .map((g) => ({ ...g, members: sortMembersByName(g.members) }));
+    .map((g) => ({ ...g, members: sortMembersByName(g.members) }))
+    .filter((g) => g.members.length > 0);
   const sortedUngrouped = sortMembersByName(ungrouped);
 
   return (
@@ -152,24 +157,50 @@ export default function MemberSidebar({ members, serverRoles }) {
           ))}
         </div>
       ))}
-      <div className="member-category">
-        MEMBERS &mdash; {sortedUngrouped.length}
-      </div>
-      {sortedUngrouped.map((m) => (
-        <MemberItem
-          key={m._id}
-          member={m}
-          roleMap={roles}
-          name={getName(m)}
-          initial={getInitial(m)}
-          topColor={getTopColor(m)}
-          avatarUrl={getAvatarUrl(m)}
-          isBot={isBotMember(m)}
-          isOnline={isOnlineMember(m)}
-          presence={getPresence(m)}
-          statusText={getStatusText(m)}
-        />
-      ))}
+      {(sortedUngrouped.length > 0) && (
+        <>
+          <div className="member-category">
+            MEMBERS &mdash; {sortedUngrouped.length}
+          </div>
+          {sortedUngrouped.map((m) => (
+            <MemberItem
+              key={m._id}
+              member={m}
+              roleMap={roles}
+              name={getName(m)}
+              initial={getInitial(m)}
+              topColor={getTopColor(m)}
+              avatarUrl={getAvatarUrl(m)}
+              isBot={isBotMember(m)}
+              isOnline={true}
+              presence={getPresence(m)}
+              statusText={getStatusText(m)}
+            />
+          ))}
+        </>
+      )}
+      {sortedOffline.length > 0 && (
+        <>
+          <div className="member-category member-category-offline">
+            Offline &mdash; {sortedOffline.length}
+          </div>
+          {sortedOffline.map((m) => (
+            <MemberItem
+              key={m._id}
+              member={m}
+              roleMap={roles}
+              name={getName(m)}
+              initial={getInitial(m)}
+              topColor={getTopColor(m)}
+              avatarUrl={getAvatarUrl(m)}
+              isBot={isBotMember(m)}
+              isOnline={false}
+              presence="offline"
+              statusText={getStatusText(m)}
+            />
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -217,7 +248,7 @@ function MemberItem({ member, roleMap, name, initial, topColor, avatarUrl, isBot
   };
 
   return (
-    <div className="member-item-wrap" ref={itemRef}>
+    <div className={`member-item-wrap${!isOnline ? ' member-item-offline' : ''}`} ref={itemRef}>
       <div className="member-item" onClick={() => setShowPopup(!showPopup)}>
         <div className="member-avatar" style={topColor ? { background: topColor } : {}}>
           {avatarUrl ? <img src={avatarUrl} alt={name} className="member-avatar-img" /> : initial}

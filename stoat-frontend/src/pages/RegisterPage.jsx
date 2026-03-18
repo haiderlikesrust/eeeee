@@ -29,7 +29,7 @@ export default function RegisterPage() {
     <div className="auth-wrapper">
       <form className="auth-box" onSubmit={handleSubmit}>
         <div className="auth-header">
-          <h1>Join Stoat</h1>
+          <h1>Join Opic</h1>
           <p>Create your account to get started</p>
         </div>
         {error && <div className="auth-error">{error}</div>}
@@ -50,6 +50,9 @@ export default function RegisterPage() {
         </button>
         <p className="auth-footer">
           Already have an account? <Link to="/login">Log in</Link>
+        </p>
+        <p className="auth-footer">
+          <Link to="/changelog">Changelog</Link>
         </p>
       </form>
     </div>

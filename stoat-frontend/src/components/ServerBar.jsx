@@ -4,6 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useMobile } from '../context/MobileContext';
 import { useUnread } from '../context/UnreadContext';
+import { useToast } from '../context/ToastContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import { post } from '../api';
 import './ServerBar.css';
@@ -14,6 +15,7 @@ export default function ServerBar({ servers, setServers, onServerAdded }) {
   const { user, logout } = useAuth();
   const { isMobile: isMobileDevice, mobileOverlay, closeMobileOverlay } = useMobile();
   const { hasServerUnread, hasAnyDmUnread } = useUnread();
+  const toast = useToast();
   const [showCreate, setShowCreate] = useState(false);
   const [serverName, setServerName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
@@ -44,7 +46,13 @@ export default function ServerBar({ servers, setServers, onServerAdded }) {
       }
       setInviteCode('');
       setShowJoin(false);
-    } catch {}
+    } catch (err) {
+      if (err?.type === 'ServerLocked') {
+        toast.error(err?.error || 'This server is locked; no new members can join.');
+      } else {
+        toast.error(err?.error || err?.message || 'Failed to join server');
+      }
+    }
   };
 
   const initial = (name) => name ? name.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() : '?';

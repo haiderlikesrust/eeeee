@@ -5,10 +5,12 @@ import { VoiceProvider } from './context/VoiceContext';
 import { UnreadProvider } from './context/UnreadContext';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import InvitePage from './pages/InvitePage';
 import AppLayout from './pages/AppLayout';
 import AdminPage from './pages/AdminPage';
 import DeveloperPortalPage from './pages/DeveloperPortalPage';
 import BotBuilderEditorPage from './pages/BotBuilderEditorPage';
+import ChangelogPage from './pages/ChangelogPage';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -25,6 +27,8 @@ export default function App() {
     return (
       <Routes>
         <Route path="/admin" element={<AdminPage />} />
+        <Route path="/invite/:code" element={<InvitePage />} />
+        <Route path="/changelog" element={<ChangelogPage />} />
         <Route path="/developers" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
@@ -39,6 +43,8 @@ export default function App() {
         <UnreadProvider>
           <Routes>
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/invite/:code" element={<InvitePage />} />
+            <Route path="/changelog" element={<ChangelogPage />} />
             <Route path="/developers" element={<DeveloperPortalPage />} />
             <Route path="/developer/editor" element={<BotBuilderEditorPage />} />
             <Route path="/developers/editor" element={<BotBuilderEditorPage />} />

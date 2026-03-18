@@ -72,13 +72,16 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   if (!hasPermission(ctx.perms, Permissions.MANAGE_SERVER)) {
     return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_SERVER permission' });
   }
-  const { name, description, icon, banner, default_permissions } = req.body || {};
+  const { name, description, icon, banner, default_permissions, locked } = req.body || {};
   if (name != null) ctx.server.name = String(name).slice(0, 32);
   if (description != null) ctx.server.description = description;
   if (icon != null) ctx.server.icon = icon;
   if (banner != null) ctx.server.banner = banner;
   if (default_permissions != null && ctx.server.owner === req.userId) {
     ctx.server.default_permissions = default_permissions;
+  }
+  if (locked != null && ctx.server.owner === req.userId) {
+    ctx.server.locked = !!locked;
   }
   await ctx.server.save();
   res.json(ctx.server.toObject());

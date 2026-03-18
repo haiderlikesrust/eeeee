@@ -10,8 +10,9 @@ const clients = new Map(); // key -> { ws, kind, userId, lastPing, intents }
 
 export function isUserOnline(userId) {
   if (!userId) return false;
+  const id = String(userId);
   for (const [, entry] of clients.entries()) {
-    if (entry.userId === userId && entry.ws.readyState === 1) return true;
+    if (String(entry.userId) === id && entry.ws.readyState === 1) return true;
   }
   return false;
 }
@@ -103,7 +104,10 @@ export function createEventServer(server) {
 
     // Notify all servers this user/bot is in so member lists show online immediately
     for (const sid of serverIds) {
-      broadcastToServer(sid, { type: 'PresenceUpdate', d: { user_id: userId } }).catch(() => {});
+      broadcastToServer(sid, {
+        type: 'PresenceUpdate',
+        d: { user_id: String(userId), server_id: String(sid) },
+      }).catch(() => {});
     }
 
     ws.on('message', async (data) => {
@@ -120,6 +124,12 @@ export function createEventServer(server) {
           case 'VoiceJoin': {
             const channelId = msg.channelId;
             if (!channelId) break;
+
+            // Only allow joining voice channels the user has access to (same server membership)
+            const channel = await Channel.findById(channelId).lean();
+            if (!channel || channel.channel_type !== 'VoiceChannel') break;
+            const serverId = channel.server;
+            if (!serverId || !entry.serverIds || !entry.serverIds.some((sid) => String(sid) === String(serverId))) break;
 
             // Leave any current voice channel first
             leaveAllVoice(userId, key);
@@ -150,9 +160,11 @@ export function createEventServer(server) {
           }
 
           case 'VoiceSignal': {
-            // Relay WebRTC signaling (offer/answer/ice) to target user
+            // Relay WebRTC signaling only between users in the same voice channel
             const { targetUserId, signal, channelId } = msg;
-            if (!targetUserId || !signal) break;
+            if (!targetUserId || !signal || !channelId) break;
+            const vcState = voiceStates.get(channelId);
+            if (!vcState || !vcState.has(userId) || !vcState.has(targetUserId)) break;
             broadcastToUser(targetUserId, {
               type: 'VoiceSignal',
               data: { fromUserId: userId, channelId, signal },
@@ -179,17 +191,28 @@ export function createEventServer(server) {
       } catch {}
     });
 
-    ws.on('close', () => {
+    ws.on('close', async () => {
       const entry = clients.get(key);
-      const serverIdsToNotify = entry?.serverIds || [];
-      leaveAllVoice(userId, key);
-      clients.delete(key);
-      // Notify servers so member lists update to show offline
-      for (const sid of serverIdsToNotify) {
-        broadcastToServer(sid, { type: 'PresenceUpdate', d: { user_id: userId } }).catch(() => {});
-      }
+      await removeClientAndNotifyServers(key, userId, entry?.serverIds, entry?.userId ?? userId);
     });
   });
+
+  // Heartbeat: treat clients that haven't pinged in 35s as dead (tab close without proper close event)
+  const HEARTBEAT_MS = 35000;
+  const interval = setInterval(() => {
+    const now = Date.now();
+    const toRemove = [];
+    for (const [k, entry] of clients.entries()) {
+      if (entry.ws.readyState !== 1) toRemove.push(k);
+      else if (now - (entry.lastPing || 0) > HEARTBEAT_MS) toRemove.push(k);
+    }
+    for (const k of toRemove) {
+      const entry = clients.get(k);
+      if (!entry) continue;
+      removeClientAndNotifyServers(k, entry.userId, entry.serverIds, entry.userId).catch(() => {});
+    }
+  }, 15000);
+  wss.on('close', () => clearInterval(interval));
 
   return wss;
 }
@@ -214,10 +237,30 @@ function leaveAllVoice(userId, key) {
   }
 }
 
+/** Remove client and broadcast PresenceUpdate to their servers (used by close and heartbeat). */
+async function removeClientAndNotifyServers(key, userId, serverIds, uid) {
+  leaveAllVoice(userId, key);
+  clients.delete(key);
+  const serverIdsToNotify = Array.isArray(serverIds) ? [...serverIds] : [];
+  const idToNotify = uid != null ? String(uid) : (userId != null ? String(userId) : null);
+  if (!idToNotify || serverIdsToNotify.length === 0) return;
+  await Promise.all(
+    serverIdsToNotify.map((sid) =>
+      broadcastToServer(
+        sid,
+        { type: 'PresenceUpdate', d: { user_id: idToNotify, server_id: String(sid) } },
+        idToNotify
+      )
+    )
+  ).catch(() => {});
+}
+
 export function broadcastToUser(userId, event) {
   const payload = typeof event === 'string' ? event : JSON.stringify(event);
+  const target = userId != null ? String(userId) : null;
+  if (!target) return;
   for (const [, entry] of clients.entries()) {
-    if (entry.userId === userId && entry.ws.readyState === 1) {
+    if (String(entry.userId) === target && entry.ws.readyState === 1) {
       entry.ws.send(payload);
     }
   }
@@ -233,13 +276,14 @@ function canReceiveIntent(entry, eventIntent) {
 export async function broadcastToServer(serverId, event, excludeUserId, options = {}) {
   const payload = typeof event === 'string' ? event : JSON.stringify(event);
   const memberDocs = await Member.find({ server: serverId }).lean();
-  const memberUserIds = new Set(memberDocs.map(m => m.user));
+  const memberUserIds = new Set(memberDocs.map((m) => String(m.user)));
+  const exclude = excludeUserId != null ? String(excludeUserId) : null;
   for (const [, entry] of clients.entries()) {
-    if (memberUserIds.has(entry.userId) && entry.ws.readyState === 1) {
-      if (excludeUserId && entry.userId === excludeUserId) continue;
-      if (!canReceiveIntent(entry, options.eventIntent)) continue;
-      entry.ws.send(payload);
-    }
+    if (entry.ws.readyState !== 1) continue;
+    if (!memberUserIds.has(String(entry.userId))) continue;
+    if (exclude && String(entry.userId) === exclude) continue;
+    if (!canReceiveIntent(entry, options.eventIntent)) continue;
+    entry.ws.send(payload);
   }
 }
 
