@@ -20,6 +20,8 @@ services:
       - mongo
     volumes:
       - uploads_data:/app/uploads
+    ports:
+      - "127.0.0.1:14702:14702"
 
   frontend:
     build:
@@ -32,7 +34,7 @@ services:
       VITE_GIPHY_API_KEY: ${VITE_GIPHY_API_KEY:-}
       VITE_TENOR_API_KEY: ${VITE_TENOR_API_KEY:-}
     ports:
-      - "80:5173"
+      - "127.0.0.1:5173:5173"
 
 volumes:
   mongo_data:

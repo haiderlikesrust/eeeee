@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useMobile } from '../context/MobileContext';
@@ -93,7 +94,7 @@ export default function ServerBar({ servers, setServers, onServerAdded }) {
         <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M18 2H7a1 1 0 0 0 0 2h11a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a1 1 0 0 0 0 2h11a3 3 0 0 0 3-3V5a3 3 0 0 0-3-3zm-6.707 14.707a1 1 0 0 0 1.414-1.414L10.414 13H17a1 1 0 0 0 0-2h-6.586l2.293-2.293a1 1 0 1 0-1.414-1.414l-4 4a1 1 0 0 0 0 1.414z"/></svg>
       </div>
 
-      {showCreate && (
+      {showCreate && createPortal(
         <div className="modal-overlay" onClick={() => setShowCreate(false)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h2>Create a Server</h2>
@@ -107,10 +108,11 @@ export default function ServerBar({ servers, setServers, onServerAdded }) {
               <button className="modal-btn primary" onClick={handleCreate}>Create</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {showJoin && (
+      {showJoin && createPortal(
         <div className="modal-overlay" onClick={() => setShowJoin(false)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h2>Join a Server</h2>
@@ -124,7 +126,8 @@ export default function ServerBar({ servers, setServers, onServerAdded }) {
               <button className="modal-btn primary" onClick={handleJoin}>Join</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
