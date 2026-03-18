@@ -1,0 +1,20 @@
+{
+  "name": "stoat-js",
+  "version": "0.1.0",
+  "description": "Stoat backend port in JavaScript - REST API + WebSocket events. MongoDB only, no Docker or Redis.",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "mongoose": "^8.8.0",
+    "multer": "^2.1.1",
+    "ulid": "^2.3.0",
+    "ws": "^8.18.0"
+  }
+}

@@ -1,0 +1,100 @@
+.app-layout {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.chat-container {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-primary);
+}
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 15px;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Mobile backdrop */
+.mobile-backdrop {
+  display: none;
+}
+
+/* ── Mobile drawer system ── */
+@media (max-width: 768px) {
+  .app-layout {
+    position: relative;
+  }
+
+  /* Pull all three panels out of flow on mobile */
+  .app-layout.mobile .server-bar,
+  .app-layout.mobile .channel-sidebar,
+  .app-layout.mobile .member-sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    z-index: 1001;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
+  }
+
+  /* Server bar: left edge, hidden by default */
+  .app-layout.mobile .server-bar {
+    left: 0;
+    transform: translateX(-100%);
+  }
+
+  /* Channel sidebar: right of server bar, hidden by default */
+  .app-layout.mobile .channel-sidebar {
+    left: 72px;
+    width: calc(100vw - 72px);
+    max-width: 300px;
+    transform: translateX(calc(-100% - 72px));
+  }
+
+  /* Member sidebar: right edge, hidden by default */
+  .app-layout.mobile .member-sidebar {
+    right: 0;
+    transform: translateX(100%);
+  }
+
+  /* When channelSidebar overlay is active, show both left panels */
+  .app-layout[data-mobile-overlay="channelSidebar"] .server-bar,
+  .app-layout[data-mobile-overlay="channelSidebar"] .channel-sidebar {
+    transform: translateX(0);
+  }
+
+  /* When memberSidebar overlay is active, show member sidebar */
+  .app-layout[data-mobile-overlay="memberSidebar"] .member-sidebar {
+    transform: translateX(0);
+  }
+
+  /* Backdrop visible when any overlay is open */
+  .mobile-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    animation: mobileBackdropIn 0.2s ease;
+  }
+
+  @keyframes mobileBackdropIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* Chat container fills entire screen on mobile */
+  .chat-container {
+    width: 100%;
+  }
+}

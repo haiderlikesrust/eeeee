@@ -1,0 +1,221 @@
+.profile-card {
+  background: var(--bg-floating);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.profile-banner {
+  height: 100px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+}
+
+.profile-card-body {
+  padding: 0 16px 16px;
+}
+
+.profile-avatar-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-top: -40px;
+}
+
+.profile-avatar-large {
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-floating);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 800;
+  border: 6px solid var(--bg-floating);
+  position: relative;
+  overflow: hidden;
+}
+
+.profile-avatar-large.clickable {
+  cursor: pointer;
+}
+
+.profile-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-avatar-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.profile-avatar-large.clickable:hover .profile-avatar-overlay {
+  opacity: 1;
+}
+
+.profile-name-display {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+
+.profile-big-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--header-primary);
+}
+
+.profile-big-tag {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.account-card {
+  background: var(--bg-floating);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.account-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+
+.account-card-row + .account-card-row {
+  border-top: 1px solid var(--input-border);
+}
+
+.account-card-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.account-card-value {
+  font-size: 15px;
+  color: var(--header-primary);
+}
+
+.settings-success {
+  background: var(--accent-muted);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: var(--accent);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.profile-preview-wrap {
+  margin: 14px 0 18px;
+}
+
+.settings-subhead {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.settings-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.settings-textarea {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 72px;
+}
+
+.settings-row-2 select {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  padding: 10px 12px;
+}
+
+.profile-color-row {
+  display: flex;
+  gap: 8px;
+}
+
+.profile-color-input {
+  width: 42px;
+  min-width: 42px;
+  height: 40px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 2px;
+}
+
+.banner-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 14px;
+}
+
+.banner-upload-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── Mobile overrides ── */
+@media (max-width: 768px) {
+  .settings-row-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-avatar-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .profile-color-row {
+    flex-wrap: wrap;
+  }
+
+  .account-card-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .banner-upload-row {
+    flex-wrap: wrap;
+  }
+}

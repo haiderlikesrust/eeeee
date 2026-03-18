@@ -1,0 +1,89 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg-primary: #1a1d24;
+  --bg-secondary: #14161b;
+  --bg-tertiary: #0f1115;
+  --bg-floating: #1e2129;
+  --bg-modifier-hover: rgba(255, 255, 255, 0.04);
+  --bg-modifier-active: rgba(255, 255, 255, 0.08);
+  --bg-modifier-selected: rgba(255, 255, 255, 0.1);
+  --text-normal: #c9cdd3;
+  --text-muted: #6b7280;
+  --text-link: #38bdf8;
+  --header-primary: #e8eaed;
+  --header-secondary: #9ca3af;
+  --accent: #10b981;
+  --accent-hover: #059669;
+  --accent-muted: rgba(16, 185, 129, 0.15);
+  --accent-glow: rgba(16, 185, 129, 0.25);
+  --accent-secondary: #6366f1;
+  --accent-secondary-hover: #4f46e5;
+  --green-360: #10b981;
+  --red-400: #ef4444;
+  --red-muted: rgba(239, 68, 68, 0.15);
+  --yellow-400: #f59e0b;
+  --channel-icon: #6b7280;
+  --input-bg: rgba(255, 255, 255, 0.05);
+  --input-border: rgba(255, 255, 255, 0.08);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.08);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.15);
+  --scrollbar-track: transparent;
+  --status-online: #10b981;
+  --status-idle: #f59e0b;
+  --status-dnd: #ef4444;
+  --status-offline: #6b7280;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-smooth: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 20px var(--accent-glow);
+}
+
+html, body, #root {
+  height: 100%;
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+  background: var(--bg-tertiary);
+  color: var(--text-normal);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+
+input, textarea, button { font-family: inherit; }
+
+a { color: var(--text-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button {
+  cursor: pointer;
+  border: none;
+  outline: none;
+}
+
+::selection {
+  background: var(--accent-muted);
+  color: var(--header-primary);
+}

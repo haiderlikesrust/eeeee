@@ -1,0 +1,85 @@
+.voice-panel {
+  border-top: 1px solid var(--border);
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+}
+
+.voice-panel-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.voice-connected-icon {
+  display: flex;
+  align-items: center;
+  animation: voice-pulse 2s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.voice-panel-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.voice-panel-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.voice-panel-channel {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.voice-panel-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.voice-control-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.voice-control-btn:hover {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.voice-control-btn.active {
+  background: rgba(240, 71, 71, 0.2);
+  color: #f04747;
+}
+
+.voice-control-btn.active:hover {
+  background: rgba(240, 71, 71, 0.35);
+}
+
+.voice-control-btn.disconnect {
+  background: rgba(240, 71, 71, 0.15);
+  color: #f04747;
+}
+
+.voice-control-btn.disconnect:hover {
+  background: #f04747;
+  color: #fff;
+}

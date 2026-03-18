@@ -1,0 +1,17 @@
+{
+  "name": "stoat-bot-sdk",
+  "version": "0.1.0",
+  "description": "Official SDK for Stoat public bot API and gateway",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test:connect": "node examples/ping-bot.js",
+    "bot:trade": "node examples/dank-trader-bot.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

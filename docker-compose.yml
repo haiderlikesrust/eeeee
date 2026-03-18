@@ -1,0 +1,39 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    build:
+      context: ./stoat-js
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 14702
+      MONGODB_URI: mongodb://mongo:27017/stoat
+      APP_URL: ${APP_URL:-http://localhost}
+      WS_URL: ${WS_URL:-ws://localhost/ws}
+    depends_on:
+      - mongo
+    volumes:
+      - uploads_data:/app/uploads
+
+  frontend:
+    build:
+      context: ./stoat-frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_GIPHY_API_KEY: ${VITE_GIPHY_API_KEY:-}
+      VITE_TENOR_API_KEY: ${VITE_TENOR_API_KEY:-}
+    ports:
+      - "80:5173"
+
+volumes:
+  mongo_data:
+  uploads_data:
