@@ -72,11 +72,29 @@ function renderMessageEmbeds(embeds) {
   );
 }
 
+function isDirectMediaUrl(url) {
+  if (!url) return false;
+  return /\.(gif|png|jpg|jpeg|webp)(\?.*)?$/i.test(url)
+    || /(?:media\d*|i)\.giphy\.com/i.test(url)
+    || /media\.tenor\.com/i.test(url);
+}
+
+function decodeHtml(value) {
+  return String(value ?? '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
 function renderLinkPreviews(linkPreviews) {
   if (!Array.isArray(linkPreviews) || linkPreviews.length === 0) return null;
+  const visiblePreviews = linkPreviews.filter((preview) => preview?.url && !isDirectMediaUrl(preview.url));
+  if (visiblePreviews.length === 0) return null;
   return (
     <div className="msg-link-previews">
-      {linkPreviews.map((preview, i) => {
+      {visiblePreviews.map((preview, i) => {
         if (!preview?.url) return null;
         const { url, title, description, image, site_name } = preview;
         return (
@@ -89,9 +107,9 @@ function renderLinkPreviews(linkPreviews) {
           >
             {image && <img src={image} alt="" className="msg-link-preview-image" />}
             <div className="msg-link-preview-body">
-              {site_name && <span className="msg-link-preview-site">{site_name}</span>}
-              {title && <span className="msg-link-preview-title">{title}</span>}
-              {description && <span className="msg-link-preview-desc">{description}</span>}
+              {site_name && <span className="msg-link-preview-site">{decodeHtml(site_name)}</span>}
+              {title && <span className="msg-link-preview-title">{decodeHtml(title)}</span>}
+              {description && <span className="msg-link-preview-desc">{decodeHtml(description)}</span>}
             </div>
           </a>
         );
@@ -145,8 +163,7 @@ function renderMessageContent(content, customEmojiMap, user, mentionDirectory, o
       if (custom) return <img key={i} src={custom.url} alt={`:${custom.name}:`} title={`:${custom.name}:`} className={`inline-emoji custom-inline-emoji ${cls}`} />;
     }
     if (/^https?:\/\/\S+$/i.test(part)) {
-      const isImageLike = /\.(gif|png|jpg|jpeg|webp)$/i.test(part) || /media\.giphy\.com|i\.giphy\.com/i.test(part);
-      if (isImageLike) {
+      if (isDirectMediaUrl(part)) {
         return <img key={i} src={part} alt="gif" className="inline-gif" onClick={() => window.open(part, '_blank')} />;
       }
       return <a key={i} href={part} target="_blank" rel="noreferrer">{part}</a>;
