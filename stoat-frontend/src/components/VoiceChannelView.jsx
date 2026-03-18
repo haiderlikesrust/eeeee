@@ -102,8 +102,9 @@ export default function VoiceChannelView({ channel }) {
       </div>
 
       <div className="voice-view-body">
-        <div className="voice-view-grid">
-          {cameraTiles.length > 0 && (
+        <div className={`voice-view-grid${screenTiles.length > 0 ? ' voice-view-grid-has-screen' : ''}`}>
+          {/* When someone is screen sharing, hide camera grid so the screen share gets full space */}
+          {cameraTiles.length > 0 && screenTiles.length === 0 && (
             <div className="voice-camera-grid">
               {cameraTiles.map((tile) => (
                 <VideoTile
@@ -293,7 +294,7 @@ function VideoTile({ stream, label, isCamera, isScreen, onExpand, expandTitle })
   const className = isCamera ? 'voice-screen-tile voice-camera-tile' : 'voice-screen-tile';
   return (
     <div className={className}>
-      <video ref={ref} autoPlay playsInline muted className="voice-screen-video" />
+      <video ref={ref} autoPlay playsInline muted className="voice-screen-video" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
       <div className="voice-screen-label">{label}</div>
       {isScreen && onExpand && (
         <button type="button" className="voice-screen-expand-btn" onClick={onExpand} title={expandTitle || 'Expand'} aria-label={expandTitle || 'Expand screen share'}>

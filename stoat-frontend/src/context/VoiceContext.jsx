@@ -337,8 +337,13 @@ export function VoiceProvider({ children }) {
   const startScreenShare = useCallback(async () => {
     if (!currentChannel || sharingScreen) return;
     try {
+      // Request explicit resolution so the receiver gets a full-size stream (layout controls display size)
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
+        video: {
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 },
+          frameRate: { ideal: 30 },
+        },
         audio: false,
       });
       screenStreamRef.current = displayStream;

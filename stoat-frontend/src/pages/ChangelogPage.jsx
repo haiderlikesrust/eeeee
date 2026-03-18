@@ -12,12 +12,13 @@ const TAGS = {
 const CHANGELOG = [
   {
     version: '0.2.0',
-    date: '2025-03-18',
+    date: '2026-03-18',
     title: 'Voice, presence & polish',
     changes: [
       { tag: 'new', text: 'Screen share in voice channels — share your screen; viewers get a large feed with Expand overlay.' },
       { tag: 'improved', text: 'Screen share viewer layout — main feed fills width; multiple shares show one focused feed plus thumbnails; click to focus.' },
       { tag: 'fixed', text: 'Screen share reliability — backend relay, track handling, and renegotiation so the other browser receives the stream.' },
+      { tag: 'fixed', text: 'Screen share viewer size — grid layout and compact participants strip so the shared screen is large for viewers. Note: this layout issue may resurface with future UI or CSS changes; report if the shared screen appears small again.' },
       { tag: 'new', text: 'Voice join/leave sounds — short tones when you or others join or leave a voice channel.' },
       { tag: 'improved', text: 'Real-time presence — member list updates when users come online or go offline without refresh; heartbeat and disconnect broadcast.' },
       { tag: 'improved', text: 'Changelog page — expand/collapse all, print and reduced-motion styles, Back to top.' },
@@ -26,7 +27,7 @@ const CHANGELOG = [
   },
   {
     version: '0.1.0',
-    date: '2025-03-18',
+    date: '2026-03-18',
     title: 'Initial Release',
     changes: [
       { tag: 'new', text: 'Real-time presence — member list updates instantly when users come online or go offline.' },

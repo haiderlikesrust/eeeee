@@ -48,6 +48,27 @@
   min-height: 0;
 }
 
+/* When screen share is active: use grid so screen gets 1fr and participants get fixed height */
+.voice-view-grid-has-screen {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.voice-view-grid-has-screen .voice-screen-wrap {
+  grid-row: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.voice-view-grid-has-screen .voice-participants-row {
+  grid-row: 2;
+}
+
 
 .voice-camera-grid {
   width: 100%;
@@ -121,9 +142,14 @@
   display: block;
 }
 
-/* Single screen share: ensure big minimum */
+/* Single screen share: ensure big minimum (when not in has-screen grid) */
 .voice-screen-wrap-single .voice-screen-main {
   min-height: min(75vh, 580px);
+}
+
+/* In has-screen grid, let the grid row dictate size so screen fill works */
+.voice-view-grid-has-screen .voice-screen-wrap-single .voice-screen-main {
+  min-height: 0;
 }
 
 /* Multiple: thumbnails strip below */
@@ -356,6 +382,47 @@
 .voice-empty-sub {
   font-size: 14px;
   color: var(--text-muted);
+}
+
+/* When screen share is active: screen fills row 1 (1fr), participants are a small strip in row 2 */
+.voice-view-grid-has-screen .voice-screen-wrap {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.voice-view-grid-has-screen .voice-participants-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  height: 90px;
+  max-height: 90px;
+  min-height: 90px;
+  overflow: hidden;
+}
+
+.voice-view-grid-has-screen .voice-participants-row .voice-participant {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  min-width: 72px;
+}
+
+.voice-view-grid-has-screen .voice-participants-row .voice-participant-avatar,
+.voice-view-grid-has-screen .voice-participants-row .voice-participant-img,
+.voice-view-grid-has-screen .voice-participants-row .voice-participant-initial {
+  width: 40px;
+  height: 40px;
+}
+
+.voice-view-grid-has-screen .voice-participants-row .voice-participant-initial {
+  font-size: 16px;
+}
+
+.voice-view-grid-has-screen .voice-participants-row .voice-participant-name {
+  font-size: 11px;
+  max-width: 72px;
 }
 
 .voice-participant {
