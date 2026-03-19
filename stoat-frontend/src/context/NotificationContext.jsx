@@ -25,7 +25,9 @@ function playNotificationSound() {
 export function NotificationProvider({ children }) {
   const { user } = useAuth();
   const { on } = useWS() || {};
-  const [enabled, setEnabled] = useState(Notification?.permission === 'granted');
+  const [enabled, setEnabled] = useState(() =>
+    typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted'
+  );
   const [soundEnabled, setSoundEnabled] = useState(true);
   const activeChannelRef = useRef(null);
 
@@ -58,8 +60,8 @@ export function NotificationProvider({ children }) {
       // Play sound
       if (soundEnabled) playNotificationSound();
 
-      // Desktop notification
-      if (enabled && !document.hasFocus()) {
+      // Desktop notification (not supported on iOS Safari)
+      if (enabled && !document.hasFocus() && typeof window !== 'undefined' && 'Notification' in window) {
         try {
           const notif = new Notification(authorName, {
             body: content,
