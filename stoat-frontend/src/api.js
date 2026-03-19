@@ -3,23 +3,43 @@ const API_BASE = '/api';
 const GET_CACHE_TTL_MS = 3000; // 3 seconds
 const getCache = new Map(); // path -> { data, expires }
 
+function safeGetItem(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSetItem(key, value) {
+  try {
+    if (value != null) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {}
+}
+
 export function getToken() {
-  return localStorage.getItem('token');
+  return safeGetItem('token');
 }
 
 export function setToken(token) {
-  if (token) localStorage.setItem('token', token);
-  else localStorage.removeItem('token');
+  if (token) safeSetItem('token', token);
+  else safeSetItem('token', null);
 }
 
 export function getSession() {
-  const raw = localStorage.getItem('session');
-  return raw ? JSON.parse(raw) : null;
+  const raw = safeGetItem('session');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 export function setSession(session) {
-  if (session) localStorage.setItem('session', JSON.stringify(session));
-  else localStorage.removeItem('session');
+  if (session) safeSetItem('session', JSON.stringify(session));
+  else safeSetItem('session', null);
 }
 
 export async function api(method, path, body) {

@@ -1083,7 +1083,7 @@ export default function ChatArea({ channelId, serverRoles }) {
       )}
 
       {canSend ? (
-        <form className="chat-input-area" onSubmit={sendMessage}>
+        <form className={`chat-input-area${mentionCard ? ' chat-input-area-above-backdrop' : ''}`} onSubmit={sendMessage}>
           {replyingTo && (
             <div className="reply-bar">
               <svg width="16" height="16" viewBox="0 0 24 24" className="reply-bar-icon"><path fill="currentColor" d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>
@@ -1143,6 +1143,7 @@ export default function ChatArea({ channelId, serverRoles }) {
               className="chat-input"
               value={input}
               onChange={(e) => { setInput(e.target.value); scheduleTyping(); }}
+              onFocus={() => mentionCard && setMentionCard(null)}
               onBlur={sendTypingStop}
               onPaste={canAttach ? handlePaste : undefined}
               onKeyDown={handleInputKeyDown}

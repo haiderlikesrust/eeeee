@@ -49,6 +49,11 @@ export default class ErrorBoundary extends React.Component {
           <p style={{ color: 'var(--text-muted, #888)', marginBottom: 24, maxWidth: 420 }}>
             An unexpected error occurred. You can try again or reload the page.
           </p>
+          {this.state.error?.message && (
+            <pre style={{ fontSize: 11, textAlign: 'left', maxWidth: '100%', overflow: 'auto', color: 'var(--text-muted, #888)', marginBottom: 16 }}>
+              {this.state.error.message}
+            </pre>
+          )}
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
             <button
               type="button"

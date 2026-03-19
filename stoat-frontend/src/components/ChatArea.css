@@ -760,6 +760,12 @@
   z-index: 301;
 }
 
+/* When profile card is open, keep input area above backdrop so user can click input to close card and type */
+.chat-input-area-above-backdrop {
+  position: relative;
+  z-index: 302;
+}
+
 .ctx-menu {
   position: fixed;
   min-width: 180px;

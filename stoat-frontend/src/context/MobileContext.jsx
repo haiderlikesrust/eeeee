@@ -4,12 +4,22 @@ import { useLocation } from 'react-router-dom';
 const MOBILE_BREAKPOINT = 768;
 const MobileCtx = createContext(null);
 
+function getInitialMobile() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.innerWidth <= MOBILE_BREAKPOINT;
+  } catch {
+    return false;
+  }
+}
+
 export function MobileProvider({ children }) {
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= MOBILE_BREAKPOINT);
+  const [isMobile, setIsMobile] = useState(getInitialMobile);
   const [mobileOverlay, setMobileOverlay] = useState(null);
   const location = useLocation();
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
     const handler = (e) => {
       setIsMobile(e.matches);

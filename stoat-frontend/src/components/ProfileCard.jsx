@@ -191,7 +191,7 @@ export default function ProfileCard({
     return () => { mounted = false; };
   }, []);
 
-  if (isMobilePopup) {
+  if (isMobilePopup && typeof document !== 'undefined' && document.body) {
     return createPortal(
       <div
         className="profile-card-portal"
