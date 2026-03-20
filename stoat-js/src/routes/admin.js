@@ -16,7 +16,16 @@ import {
   Bot,
   Webhook,
   AuditLog,
+  Session,
 } from '../db/models/index.js';
+import { toPublicUser } from '../publicUser.js';
+import {
+  ensureOfficialClawUser,
+  getOfficialClawUserId,
+  isOfficialClawUserId,
+} from '../officialClaw.js';
+import { postOfficialClawChannelMessage } from '../clawMessaging.js';
+import { OPIC_STAFF_BADGE_ID } from '../opicStaffBadge.js';
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@admin.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
@@ -325,6 +334,12 @@ router.patch('/badges/:id', adminAuth, async (req, res) => {
   const badge = await GlobalBadge.findById(req.params.id);
   if (!badge) return res.status(404).json({ type: 'NotFound', error: 'Badge not found' });
   const { label, description, icon, active } = req.body || {};
+  if (req.params.id === OPIC_STAFF_BADGE_ID && active === false) {
+    return res.status(400).json({
+      type: 'InvalidOperation',
+      error: 'The Opic Staff badge cannot be deactivated.',
+    });
+  }
   if (label !== undefined) badge.label = String(label || '').trim().slice(0, 50);
   if (description !== undefined) badge.description = String(description || '').trim().slice(0, 200);
   if (icon !== undefined) badge.icon = icon || null;
@@ -334,6 +349,12 @@ router.patch('/badges/:id', adminAuth, async (req, res) => {
 });
 
 router.delete('/badges/:id', adminAuth, async (req, res) => {
+  if (req.params.id === OPIC_STAFF_BADGE_ID) {
+    return res.status(400).json({
+      type: 'InvalidOperation',
+      error: 'The Opic Staff badge cannot be deleted. Remove it from users in Admin → Staff.',
+    });
+  }
   const badge = await GlobalBadge.findById(req.params.id);
   if (!badge) return res.status(404).json({ type: 'NotFound', error: 'Badge not found' });
   await badge.deleteOne();
@@ -353,20 +374,147 @@ router.get('/users', adminAuth, async (req, res) => {
     }
     : {};
   const users = await User.find(query)
-    .select('_id username discriminator display_name system_badges privileged')
+    .select('_id username discriminator display_name system_badges privileged disabled disabled_reason')
     .limit(30)
     .lean();
   res.json(users || []);
 });
 
+router.get('/claw', adminAuth, async (req, res) => {
+  try {
+    await ensureOfficialClawUser();
+    const claw = await User.findById(getOfficialClawUserId()).lean();
+    if (!claw) {
+      return res.status(500).json({ type: 'InternalError', error: 'Claw user missing' });
+    }
+    res.json({
+      user: toPublicUser(claw, { relationship: 'None', online: false }),
+    });
+  } catch (err) {
+    console.error('[admin/claw GET]', err);
+    res.status(500).json({ type: 'InternalError', error: 'Failed to load Claw' });
+  }
+});
+
+router.patch('/claw', adminAuth, async (req, res) => {
+  try {
+    await ensureOfficialClawUser();
+    const claw = await User.findById(getOfficialClawUserId());
+    if (!claw) {
+      return res.status(500).json({ type: 'InternalError', error: 'Claw user missing' });
+    }
+    const body = req.body || {};
+    if (body.display_name !== undefined) {
+      const v = body.display_name;
+      claw.display_name = v === null || v === ''
+        ? undefined
+        : String(v).trim().slice(0, 64) || undefined;
+    }
+    if (body.username !== undefined) {
+      const nu = String(body.username || '').toLowerCase().replace(/\s/g, '_').slice(0, 32);
+      if (!nu) {
+        return res.status(400).json({ type: 'FailedValidation', error: 'Invalid username' });
+      }
+      const clash = await User.findOne({
+        username: nu,
+        discriminator: claw.discriminator,
+        _id: { $ne: claw._id },
+      }).lean();
+      if (clash) {
+        return res.status(409).json({ type: 'Conflict', error: 'Username#discriminator already taken' });
+      }
+      claw.username = nu;
+    }
+    if (body.discriminator !== undefined) {
+      const raw = String(body.discriminator || '').replace(/\D/g, '').slice(0, 4);
+      const d = (raw.length ? raw : '0').padStart(4, '0').slice(-4);
+      const clash = await User.findOne({
+        username: claw.username,
+        discriminator: d,
+        _id: { $ne: claw._id },
+      }).lean();
+      if (clash) {
+        return res.status(409).json({ type: 'Conflict', error: 'Username#discriminator already taken' });
+      }
+      claw.discriminator = d;
+    }
+    if (body.avatar !== undefined) {
+      claw.avatar = body.avatar || null;
+    }
+    if (body.profile !== undefined && typeof body.profile === 'object') {
+      claw.profile = { ...(claw.profile && typeof claw.profile === 'object' ? claw.profile.toObject?.() || claw.profile : {}), ...body.profile };
+    }
+    if (body.status !== undefined && typeof body.status === 'object') {
+      const cur = claw.status && typeof claw.status === 'object'
+        ? (claw.status.toObject?.() || claw.status)
+        : {};
+      const s = body.status;
+      claw.status = {
+        ...cur,
+        ...(s.text !== undefined ? { text: s.text } : {}),
+        ...(s.presence !== undefined ? { presence: s.presence } : {}),
+      };
+    }
+    claw.bot = { owner: 'system', official: true };
+    claw.markModified('profile');
+    claw.markModified('status');
+    await claw.save();
+    res.json({ user: toPublicUser(claw, { relationship: 'None', online: false }) });
+  } catch (err) {
+    console.error('[admin/claw PATCH]', err);
+    res.status(500).json({ type: 'InternalError', error: err.message || 'Failed to update Claw' });
+  }
+});
+
+router.post('/claw/messages', adminAuth, async (req, res) => {
+  const { channel_id, content } = req.body || {};
+  if (!channel_id || !String(content ?? '').trim()) {
+    return res.status(400).json({ type: 'FailedValidation', error: 'channel_id and content required' });
+  }
+  try {
+    const payload = await postOfficialClawChannelMessage(channel_id, content);
+    res.status(201).json(payload);
+  } catch (e) {
+    if (e.code === 'NotFound') {
+      return res.status(404).json({ type: 'NotFound', error: e.message });
+    }
+    if (e.code === 'InvalidChannel') {
+      return res.status(400).json({ type: 'FailedValidation', error: e.message });
+    }
+    console.error('[admin/claw/messages]', e);
+    res.status(500).json({ type: 'InternalError', error: e.message || 'Failed to send message' });
+  }
+});
+
 router.patch('/users/:id', adminAuth, async (req, res) => {
-  const { privileged } = req.body || {};
-  if (privileged === undefined) {
-    return res.status(400).json({ type: 'FailedValidation', error: 'privileged is required' });
+  const { privileged, disabled, disabled_reason } = req.body || {};
+  const hasPrivileged = privileged !== undefined;
+  const hasDisabled = disabled !== undefined;
+  if (!hasPrivileged && !hasDisabled) {
+    return res.status(400).json({
+      type: 'FailedValidation',
+      error: 'Provide privileged and/or disabled',
+    });
   }
   const user = await User.findById(req.params.id);
   if (!user) return res.status(404).json({ type: 'NotFound', error: 'User not found' });
-  user.privileged = !!privileged;
+  if (isOfficialClawUserId(user._id) && hasDisabled && disabled) {
+    return res.status(400).json({
+      type: 'InvalidOperation',
+      error: 'Cannot disable the official Claw account',
+    });
+  }
+  if (hasPrivileged) user.privileged = !!privileged;
+  if (hasDisabled) {
+    user.disabled = !!disabled;
+    user.disabled_reason = user.disabled && disabled_reason != null
+      ? String(disabled_reason).trim().slice(0, 500)
+      : null;
+    if (!user.disabled) user.disabled_reason = null;
+    if (user.disabled) {
+      await Session.deleteMany({ user_id: user._id });
+    }
+  }
   await user.save();
   res.json({
     _id: user._id,
@@ -375,6 +523,8 @@ router.patch('/users/:id', adminAuth, async (req, res) => {
     discriminator: user.discriminator,
     system_badges: user.system_badges || [],
     privileged: !!user.privileged,
+    disabled: !!user.disabled,
+    disabled_reason: user.disabled_reason || null,
   });
 });
 

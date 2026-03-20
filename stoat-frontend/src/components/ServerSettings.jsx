@@ -1,6 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { get, post, patch, del, put, uploadFile } from '../api';
 import { resolveFileUrl } from '../utils/avatarUrl';
+import { isBotUser } from '../utils/botDisplay';
+import ServerOwnerCrown from './ServerOwnerCrown';
+import { showServerOwnerCrownForUser } from '../utils/serverOwnerCrownDisplay';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import {
@@ -161,6 +164,16 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const [bans, setBans] = useState([]);
   const [invites, setInvites] = useState([]);
   const [members, setMembers] = useState([]);
+  const transferCandidates = useMemo(() => {
+    if (!user?._id) return [];
+    return members.filter((m) => {
+      const u = typeof m.user === 'object' ? m.user : null;
+      if (!u?._id) return false;
+      if (u._id === user._id) return false;
+      if (isBotUser(u)) return false;
+      return true;
+    });
+  }, [members, user?._id]);
   const [channels, setChannels] = useState([]);
   const [newRoleName, setNewRoleName] = useState('');
   const [newRoleColor, setNewRoleColor] = useState('#5865f2');
@@ -183,6 +196,8 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const [wordFilter, setWordFilter] = useState(server?.word_filter || []);
   const [newWord, setNewWord] = useState('');
   const [auditLogs, setAuditLogs] = useState([]);
+  const [transferTargetId, setTransferTargetId] = useState('');
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
 
   const getServerIconUrl = () => resolveFileUrl(server?.icon);
   const getErrMsg = (err, fallback) => err?.error || err?.message || fallback;
@@ -206,6 +221,14 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   useEffect(() => {
     if (server?.locked != null) setLocked(server.locked);
   }, [server?.locked]);
+
+  useEffect(() => {
+    setTransferTargetId('');
+  }, [serverId]);
+
+  useEffect(() => {
+    if (tab === 'overview' && isOwner) loadMembers();
+  }, [tab, isOwner, serverId]);
 
   useEffect(() => {
     if (tab === 'roles') fetchRoles();
@@ -423,6 +446,24 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
 
   const getMemberName = (m) => m.nickname || (typeof m.user === 'object' ? (m.user.display_name || m.user.username) : 'Unknown') || 'Unknown';
   const getMemberUserId = (m) => typeof m.user === 'object' ? m.user._id : m.user;
+
+  const transferOwnership = async () => {
+    if (!transferTargetId) return;
+    const targetMember = members.find((m) => getMemberUserId(m) === transferTargetId);
+    const label = targetMember ? getMemberName(targetMember) : 'this member';
+    if (!confirm(`Transfer ownership to ${label}? You will lose owner-only controls (deleting the server, transferring again). You cannot undo this yourself.`)) return;
+    setTransferSubmitting(true);
+    try {
+      const updated = await post(`/servers/${serverId}/transfer-ownership`, { user_id: transferTargetId });
+      if (onUpdated) onUpdated(updated);
+      setTransferTargetId('');
+      toast.success('Ownership transferred');
+    } catch (err) {
+      toast.error(getErrMsg(err, 'Failed to transfer ownership'));
+    }
+    setTransferSubmitting(false);
+  };
+
   const getMemberAvatarUrl = (m) => resolveFileUrl(typeof m.user === 'object' ? m.user?.avatar : null);
   const getHighestRole = (m) => {
     const mRoles = (m.roles || []).map(rId => roles.find(r => r.id === rId)).filter(Boolean);
@@ -562,6 +603,46 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
                       <div className="perm-toggle-thumb" />
                     </div>
                   </button>
+                </div>
+              )}
+              {isOwner && (
+                <div className="transfer-ownership-block">
+                  <h3 className="transfer-ownership-title">Transfer ownership</h3>
+                  <p className="settings-hint transfer-ownership-desc">
+                    Make another member the server owner. You will keep membership but lose owner-only actions. Bots cannot receive ownership.
+                  </p>
+                  {transferCandidates.length === 0 ? (
+                    <p className="settings-empty transfer-ownership-empty">Add at least one non-bot member to transfer ownership.</p>
+                  ) : (
+                    <>
+                      <label className="auth-label">
+                        <span>New owner</span>
+                        <select
+                          className="transfer-ownership-select"
+                          value={transferTargetId}
+                          onChange={(e) => setTransferTargetId(e.target.value)}
+                        >
+                          <option value="">Select a member…</option>
+                          {transferCandidates.map((m) => {
+                            const uid = typeof m.user === 'object' ? m.user._id : m.user;
+                            return (
+                              <option key={m._id} value={uid}>
+                                {getMemberName(m)}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="settings-danger-btn transfer-ownership-btn"
+                        disabled={!transferTargetId || transferSubmitting}
+                        onClick={transferOwnership}
+                      >
+                        {transferSubmitting ? 'Transferring…' : 'Transfer ownership'}
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
               <button className="modal-btn primary" onClick={saveOverview} disabled={saving}>{saving ? 'Saving...' : 'Save Changes'}</button>
@@ -741,6 +822,7 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
                       <div className="settings-list-info">
                         <div className="settings-member-avatar" style={highestRole?.colour ? { background: highestRole.colour } : {}}>
                           {avatarUrl ? <img src={avatarUrl} alt="" className="settings-member-avatar-img" /> : getMemberName(m)[0]?.toUpperCase()}
+                          {showServerOwnerCrownForUser(typeof m.user === 'object' ? m.user : null, server?.owner, getMemberUserId(m)) && <ServerOwnerCrown size="settings" />}
                         </div>
                         <div>
                           <span className="settings-list-name" style={highestRole?.colour ? { color: highestRole.colour } : {}}>

@@ -11,6 +11,11 @@ import { toPublicUser } from '../publicUser.js';
 
 const router = Router();
 
+function isBotUser(user) {
+  const owner = user?.bot?.owner;
+  return typeof owner === 'string' && owner.trim().length > 0;
+}
+
 async function getServerAndMember(req, res) {
   const server = await Server.findById(req.params.target);
   if (!server) { res.status(404).json({ type: 'NotFound', error: 'Server not found' }); return null; }
@@ -88,6 +93,44 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   }
   await ctx.server.save();
   res.json(ctx.server.toObject());
+});
+
+// POST /servers/:target/transfer-ownership
+router.post('/:target/transfer-ownership', authMiddleware(), async (req, res) => {
+  const ctx = await getServerAndMember(req, res);
+  if (!ctx) return;
+  if (!sameId(ctx.server.owner, req.userId)) {
+    return res.status(403).json({ type: 'Forbidden', error: 'Only the server owner can transfer ownership' });
+  }
+  const newOwnerId = req.body?.user_id;
+  if (!newOwnerId || typeof newOwnerId !== 'string') {
+    return res.status(400).json({ type: 'InvalidPayload', error: 'user_id required' });
+  }
+  if (sameId(newOwnerId, req.userId)) {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Pick another member to receive ownership' });
+  }
+  const targetMember = await Member.findOne({ server: ctx.server._id, user: newOwnerId });
+  if (!targetMember) {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'New owner must be a member of this server' });
+  }
+  const newOwnerUser = await User.findById(newOwnerId).lean();
+  if (!newOwnerUser) {
+    return res.status(404).json({ type: 'NotFound', error: 'User not found' });
+  }
+  if (isBotUser(newOwnerUser)) {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Cannot transfer ownership to a bot account' });
+  }
+  ctx.server.owner = newOwnerId;
+  await ctx.server.save();
+  broadcastToServer(ctx.server._id, {
+    type: 'ServerOwnerChange',
+    data: { serverId: ctx.server._id, owner_id: newOwnerId },
+  });
+  const channels = await Channel.find({ _id: { $in: ctx.server.channels } }).lean();
+  res.json({
+    ...ctx.server.toObject(),
+    channels: ctx.server.channels.map((id) => channels.find((c) => c._id === id) || id),
+  });
 });
 
 // DELETE /servers/:target

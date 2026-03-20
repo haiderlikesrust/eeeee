@@ -3,6 +3,8 @@ import { get, post, uploadFile } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useWS } from '../context/WebSocketContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
+import ServerOwnerCrown from './ServerOwnerCrown';
+import { showServerOwnerCrownForUser } from '../utils/serverOwnerCrownDisplay';
 import './ThreadPanel.css';
 
 function formatTimestamp(d) {
@@ -22,7 +24,7 @@ function getAuthorAvatar(author) {
   return resolveFileUrl(author.avatar);
 }
 
-export default function ThreadPanel({ threadChannel, onClose, customEmojis }) {
+export default function ThreadPanel({ threadChannel, onClose, customEmojis, serverOwnerId }) {
   const { user } = useAuth();
   const { on } = useWS();
   const [messages, setMessages] = useState([]);
@@ -140,7 +142,10 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis }) {
           .map((msg) => {
           const authorName = getAuthorName(msg.author);
           const avatarUrl = getAuthorAvatar(msg.author);
-          const isOwn = (typeof msg.author === 'object' ? msg.author?._id : msg.author) === user?._id;
+          const authorObj = typeof msg.author === 'object' ? msg.author : null;
+          const authorId = authorObj?._id ?? msg.author;
+          const isOwn = authorId === user?._id;
+          const isServerOwnerMsg = showServerOwnerCrownForUser(authorObj, serverOwnerId, authorId);
           return (
             <div key={msg._id} className={`thread-msg ${isOwn ? 'own' : ''}`}>
               <div className="thread-msg-avatar">
@@ -148,6 +153,7 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis }) {
                   ? <img src={avatarUrl} alt="" />
                   : <span>{authorName[0]?.toUpperCase()}</span>
                 }
+                {isServerOwnerMsg && <ServerOwnerCrown size="member" />}
               </div>
               <div className="thread-msg-body">
                 <div className="thread-msg-header">

@@ -73,10 +73,41 @@
   color: var(--text-muted);
 }
 
+.profile-card-tag-row {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .profile-card-tag {
-  margin-top: 2px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.profile-card-bot-pill,
+.profile-card-verified-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.profile-card-bot-pill {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.profile-card-verified-pill {
+  background: rgba(88, 101, 242, 0.22);
+  color: #a5b4fc;
 }
 
 .profile-card-presence-wrap {
@@ -250,6 +281,22 @@
   height: 14px;
   object-fit: contain;
   border-radius: 3px;
+}
+
+.profile-card-badge--staff {
+  background: rgba(212, 168, 75, 0.12);
+  border-color: rgba(212, 168, 75, 0.35);
+  color: #d9b866;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.profile-card-badge-icon--staff {
+  font-size: 12px;
+  color: #d9b866;
+  opacity: 0.95;
 }
 
 .profile-card-links {

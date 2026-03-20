@@ -116,7 +116,7 @@ function AppLayoutInner() {
       const idx = prev.findIndex((s) => s._id === server._id);
       if (idx >= 0) {
         const copy = [...prev];
-        copy[idx] = server;
+        copy[idx] = { ...copy[idx], ...server };
         return copy;
       }
       return [...prev, server];
@@ -291,13 +291,19 @@ function ServerView({ servers, setServers, addServer, removeServer, onSelfRemove
         return String(uid) !== String(data.userId);
       }));
     });
+    const unsub3 = on('ServerOwnerChange', (data) => {
+      if (String(data?.serverId) !== String(serverId) || !data?.owner_id) return;
+      setServer((prev) => (prev ? { ...prev, owner: data.owner_id } : prev));
+      addServer({ _id: serverId, owner: data.owner_id });
+    });
     return () => {
       if (presenceTimer) clearTimeout(presenceTimer);
       unsubPresence();
       unsub1();
       unsub2();
+      unsub3();
     };
-  }, [on, serverId]);
+  }, [on, serverId, addServer]);
 
   // Stable handlers so memo(ChannelSidebar) skips re-renders when only other ServerView state changes
   const handleChannelCreated = useCallback((ch) => {
@@ -337,6 +343,7 @@ function ServerView({ servers, setServers, addServer, removeServer, onSelfRemove
             <ServerChatView
               members={members}
               serverRoles={server?.roles || {}}
+              serverOwnerId={server?.owner}
               channels={channels}
               onChannelAccessLost={handleChannelAccessLost}
             />
@@ -359,7 +366,7 @@ function ServerView({ servers, setServers, addServer, removeServer, onSelfRemove
   );
 }
 
-function ServerChatView({ members, serverRoles, channels, onChannelAccessLost }) {
+function ServerChatView({ members, serverRoles, serverOwnerId, channels, onChannelAccessLost }) {
   const { channelId } = useParams();
   const channel = (channels || []).find((c) => c._id === channelId);
   const isVoice = channel?.channel_type === 'VoiceChannel';
@@ -368,7 +375,7 @@ function ServerChatView({ members, serverRoles, channels, onChannelAccessLost })
     return (
       <div className="chat-container">
         <VoiceChannelView channel={channel} />
-        <MemberSidebar members={members} serverRoles={serverRoles} />
+        <MemberSidebar members={members} serverRoles={serverRoles} serverOwnerId={serverOwnerId} />
         <OfeedPanel />
       </div>
     );
@@ -376,8 +383,8 @@ function ServerChatView({ members, serverRoles, channels, onChannelAccessLost })
 
   return (
     <div className="chat-container">
-      <ChatArea channelId={channelId} serverRoles={serverRoles} onChannelAccessLost={onChannelAccessLost} />
-      <MemberSidebar members={members} serverRoles={serverRoles} />
+      <ChatArea channelId={channelId} serverRoles={serverRoles} serverOwnerId={serverOwnerId} onChannelAccessLost={onChannelAccessLost} />
+      <MemberSidebar members={members} serverRoles={serverRoles} serverOwnerId={serverOwnerId} />
       <OfeedPanel />
     </div>
   );

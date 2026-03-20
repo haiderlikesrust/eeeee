@@ -7,6 +7,8 @@ import { useMobile } from '../context/MobileContext';
 import { get } from '../api';
 import { loadSystemBadgeMap } from '../utils/systemBadges';
 import { activityTypeLabel, formatActivitySecondary, resolveActivityImageUrl } from '../utils/activityDisplay';
+import { isBotUser, isVerifiedBotUser } from '../utils/botDisplay';
+import { OPIC_STAFF_BADGE_ID } from '../utils/opicStaff';
 import ActivityElapsed from './ActivityElapsed';
 import ActivityMiniIcon from './ActivityMiniIcon';
 import './ProfileCard.css';
@@ -121,7 +123,15 @@ export default function ProfileCard({
             <div className="profile-card-name">{displayName}</div>
             {p.pronouns && <div className="profile-card-pronouns">{p.pronouns}</div>}
           </div>
-          <div className="profile-card-tag">{getTag(user)}</div>
+          <div className="profile-card-tag-row">
+            <div className="profile-card-tag">{getTag(user)}</div>
+            {isBotUser(user) && (
+              <span className="profile-card-bot-pill" title="Bot">BOT</span>
+            )}
+            {isVerifiedBotUser(user) && (
+              <span className="profile-card-verified-pill" title="Verified bot">Verified</span>
+            )}
+          </div>
 
           {(statusActivity || user?.status?.text) && (
             <div className={`profile-card-presence-wrap${statusActivity && user?.status?.text ? ' profile-card-presence-both' : ''}`}>
@@ -166,13 +176,16 @@ export default function ProfileCard({
               {systemBadges.map((badgeId, i) => {
                 const meta = badgeMap[badgeId] || { label: badgeId, description: '' };
                 const iconUrl = resolveFileUrl(meta.icon);
+                const isStaffBadge = badgeId === OPIC_STAFF_BADGE_ID;
                 return (
                   <span
                     key={`${badgeId}-${i}`}
-                    className="profile-card-badge system-badge"
+                    className={`profile-card-badge system-badge${isStaffBadge ? ' profile-card-badge--staff' : ''}`}
                     title={meta.description ? `${meta.label} - ${meta.description}` : meta.label}
                   >
-                    {iconUrl ? (
+                    {isStaffBadge ? (
+                      <span className="profile-card-badge-icon profile-card-badge-icon--staff" aria-hidden="true">✦</span>
+                    ) : iconUrl ? (
                       <img src={iconUrl} alt="" className="profile-card-badge-icon-img" />
                     ) : (
                       <span className="profile-card-badge-icon" aria-hidden="true">🏷️</span>

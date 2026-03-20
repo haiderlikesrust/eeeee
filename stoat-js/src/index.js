@@ -5,10 +5,18 @@ import { connectDb } from './db/index.js';
 import app from './app.js';
 import { createEventServer } from './events.js';
 import { startPresenceApiExpiry } from './presenceApiExpiry.js';
+import { ensureOfficialClawUser } from './officialClaw.js';
+import { ensureOpicStaffBadge } from './opicStaffBadge.js';
 import logger from './logger.js';
 
 async function main() {
   await connectDb();
+  await ensureOfficialClawUser().catch((err) => {
+    logger.error({ err, msg: 'Failed to ensure official Claw user' });
+  });
+  await ensureOpicStaffBadge().catch((err) => {
+    logger.error({ err, msg: 'Failed to ensure Opic Staff badge' });
+  });
   startPresenceApiExpiry();
 
   // Remove old unique index on username alone (we use username+discriminator now)

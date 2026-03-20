@@ -20,6 +20,13 @@ export function authMiddleware(optional = false) {
       if (optional) return next();
       return res.status(401).json({ type: 'Unauthorized', error: 'User not found' });
     }
+    if (user.disabled) {
+      await Session.deleteOne({ _id: session._id }).catch(() => {});
+      return res.status(403).json({
+        type: 'AccountDisabled',
+        error: user.disabled_reason?.trim() || 'This account has been disabled.',
+      });
+    }
     req.user = user;
     req.userId = user._id;
     req.session = session;

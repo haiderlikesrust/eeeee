@@ -90,6 +90,9 @@ function parseProfileUpdate(profile) {
     }).filter(Boolean);
     out.social_links = links;
   }
+  if (profile.hide_server_owner_crown !== undefined) {
+    out.hide_server_owner_crown = !!profile.hide_server_owner_crown;
+  }
   return { value: out };
 }
 

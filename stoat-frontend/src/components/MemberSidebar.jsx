@@ -7,10 +7,19 @@ import { get } from '../api';
 import ProfileCard from './ProfileCard';
 import { activityTypeLabel, formatActivityPrimary, formatActivitySecondary, resolveActivityImageUrl } from '../utils/activityDisplay';
 import ActivityElapsed from './ActivityElapsed';
+import { isBotUser, isVerifiedBotUser } from '../utils/botDisplay';
+import { userHasOpicStaff } from '../utils/opicStaff';
 import ActivityMiniIcon from './ActivityMiniIcon';
+import ServerOwnerCrown from './ServerOwnerCrown';
+import { showServerOwnerCrownForUser } from '../utils/serverOwnerCrownDisplay';
 import './MemberSidebar.css';
 
-export default function MemberSidebar({ members, serverRoles }) {
+function memberUserId(m) {
+  if (typeof m.user === 'object' && m.user) return m.user._id;
+  return m.user;
+}
+
+export default function MemberSidebar({ members, serverRoles, serverOwnerId }) {
   const { user } = useAuth();
   const { isMobile: isMobileDevice, mobileOverlay, closeMobileOverlay } = useMobile();
   const isDrawerOpen = isMobileDevice && mobileOverlay === 'memberSidebar';
@@ -44,8 +53,7 @@ export default function MemberSidebar({ members, serverRoles }) {
 
   const isBotMember = (m) => {
     const u = typeof m.user === 'object' ? m.user : null;
-    const owner = u?.bot?.owner;
-    return typeof owner === 'string' && owner.trim().length > 0;
+    return isBotUser(u);
   };
 
   const isOnlineMember = (m) => {
@@ -160,6 +168,9 @@ export default function MemberSidebar({ members, serverRoles }) {
               topColor={getTopColor(m)}
               avatarUrl={getAvatarUrl(m)}
               isBot={isBotMember(m)}
+              isVerifiedBot={isVerifiedBotUser(typeof m.user === 'object' ? m.user : null)}
+              isStaff={userHasOpicStaff(typeof m.user === 'object' ? m.user : null)}
+              isServerOwner={showServerOwnerCrownForUser(typeof m.user === 'object' ? m.user : null, serverOwnerId, memberUserId(m))}
               isOnline={isOnlineMember(m)}
               presence={getPresence(m)}
               statusText={getStatusText(m)}
@@ -183,6 +194,9 @@ export default function MemberSidebar({ members, serverRoles }) {
               topColor={getTopColor(m)}
               avatarUrl={getAvatarUrl(m)}
               isBot={isBotMember(m)}
+              isVerifiedBot={isVerifiedBotUser(typeof m.user === 'object' ? m.user : null)}
+              isStaff={userHasOpicStaff(typeof m.user === 'object' ? m.user : null)}
+              isServerOwner={showServerOwnerCrownForUser(typeof m.user === 'object' ? m.user : null, serverOwnerId, memberUserId(m))}
               isOnline={true}
               presence={getPresence(m)}
               statusText={getStatusText(m)}
@@ -206,6 +220,9 @@ export default function MemberSidebar({ members, serverRoles }) {
               topColor={getTopColor(m)}
               avatarUrl={getAvatarUrl(m)}
               isBot={isBotMember(m)}
+              isVerifiedBot={isVerifiedBotUser(typeof m.user === 'object' ? m.user : null)}
+              isStaff={userHasOpicStaff(typeof m.user === 'object' ? m.user : null)}
+              isServerOwner={showServerOwnerCrownForUser(typeof m.user === 'object' ? m.user : null, serverOwnerId, memberUserId(m))}
               isOnline={false}
               presence="offline"
               statusText={getStatusText(m)}
@@ -218,7 +235,7 @@ export default function MemberSidebar({ members, serverRoles }) {
   );
 }
 
-function MemberItem({ member, roleMap, name, initial, topColor, avatarUrl, isBot, isOnline, presence = 'offline', statusText, activity }) {
+function MemberItem({ member, roleMap, name, initial, topColor, avatarUrl, isBot, isVerifiedBot, isStaff, isServerOwner, isOnline, presence = 'offline', statusText, activity }) {
   const activityImg = activity ? resolveActivityImageUrl(activity.image) : null;
   const [showPopup, setShowPopup] = useState(false);
   const navigate = useNavigate();
@@ -266,6 +283,7 @@ function MemberItem({ member, roleMap, name, initial, topColor, avatarUrl, isBot
       <div className="member-item" onClick={() => setShowPopup(!showPopup)}>
         <div className="member-avatar" style={topColor ? { background: topColor } : {}}>
           {avatarUrl ? <img src={avatarUrl} alt={name} className="member-avatar-img" /> : initial}
+          {isServerOwner && <ServerOwnerCrown size="member" />}
           {isOnline && <span className={`member-online-dot presence-${presence}`} title={presence === 'idle' ? 'Idle' : presence === 'busy' ? 'Busy' : 'Online'} />}
         </div>
         <div className="member-info-col">
@@ -278,6 +296,17 @@ function MemberItem({ member, roleMap, name, initial, topColor, avatarUrl, isBot
                 </svg>
                 BOT
               </span>
+            )}
+            {isVerifiedBot && (
+              <span className="member-verified-bot-badge" title="Verified bot">
+                <svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                </svg>
+                Verified
+              </span>
+            )}
+            {isStaff && (
+              <span className="member-staff-badge" title="Opic Staff">Staff</span>
             )}
           </div>
           {(activity || statusText) && (

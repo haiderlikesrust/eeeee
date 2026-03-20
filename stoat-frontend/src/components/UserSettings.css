@@ -388,6 +388,44 @@
   color: var(--text-muted);
 }
 
+.user-settings-privacy-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 20px 0;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--input-border);
+  background: var(--bg-secondary);
+}
+
+.user-settings-privacy-toggle input[type='checkbox'] {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.user-settings-privacy-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.user-settings-privacy-toggle-text strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--header-primary);
+}
+
+.user-settings-privacy-toggle-text .settings-hint {
+  margin: 0;
+}
+
 /* ── Mobile overrides ── */
 @media (max-width: 768px) {
   .settings-row-2 {

@@ -15,8 +15,12 @@ import ProfileCard from './ProfileCard';
 import Lightbox from './Lightbox';
 import FormattingToolbar from './FormattingToolbar';
 import ThreadPanel from './ThreadPanel';
+import ServerOwnerCrown from './ServerOwnerCrown';
+import { showServerOwnerCrownForUser } from '../utils/serverOwnerCrownDisplay';
 import OfeedShareLinkCard from './OfeedShareLinkCard';
 import { parseOfeedShareUrl, shouldHideOfeedUrlInMessage } from '../utils/ofeedShareUrl';
+import { isBotUser, isVerifiedBotUser } from '../utils/botDisplay';
+import { userHasOpicStaff } from '../utils/opicStaff';
 import './ChatArea.css';
 
 /** Same tokenization as renderMessageContent (URLs, mentions, emoji). */
@@ -195,10 +199,6 @@ function renderMarkdownInline(text) {
   });
 }
 
-function isBotUser(userObj) {
-  const owner = userObj?.bot?.owner;
-  return typeof owner === 'string' && owner.trim().length > 0;
-}
 
 function renderMessageContent(content, customEmojiMap, user, mentionDirectory, onMentionClick, roleDirectory, setLightboxSrc, linkPreviews) {
   if (!content) return null;
@@ -296,7 +296,7 @@ function renderMessageContent(content, customEmojiMap, user, mentionDirectory, o
 const TYPING_SEND_INTERVAL_MS = 2000;
 const TYPING_STOP_DELAY_MS = 3000;
 
-export default function ChatArea({ channelId, serverRoles, onChannelAccessLost }) {
+export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChannelAccessLost }) {
   const { user } = useAuth();
   const { send, on } = useWS();
   const { isMobile, openChannelSidebar, openMemberSidebar } = useMobile();
@@ -894,6 +894,19 @@ export default function ChatArea({ channelId, serverRoles, onChannelAccessLost }
     if (typeof msg.author === 'object' && msg.author) return isBotUser(msg.author);
     return false;
   };
+  const messageAuthorVerifiedBot = (msg) => {
+    if (typeof msg.author === 'object' && msg.author) return isVerifiedBotUser(msg.author);
+    return false;
+  };
+  const messageAuthorStaff = (msg) => {
+    if (typeof msg.author === 'object' && msg.author) return userHasOpicStaff(msg.author);
+    return false;
+  };
+
+  const getMessageAuthorId = (msg) => {
+    if (typeof msg.author === 'object' && msg.author) return msg.author._id;
+    return msg.author;
+  };
 
   const shouldShowHeader = (msg, idx) => {
     if (idx === 0) return true;
@@ -1159,6 +1172,9 @@ export default function ChatArea({ channelId, serverRoles, onChannelAccessLost }
         {messages.map((msg, idx) => {
           const showHeader = shouldShowHeader(msg, idx);
           const isEditing = editingMsg === msg._id;
+          const authorId = getMessageAuthorId(msg);
+          const authorObj = typeof msg.author === 'object' ? msg.author : null;
+          const isServerOwnerMessage = showServerOwnerCrownForUser(authorObj, serverOwnerId, authorId);
           return (
             <div key={msg._id} id={`msg-${msg._id}`} className={`message ${showHeader ? 'with-header' : 'compact'} ${isEditing ? 'editing' : ''} ${msg.pinned ? 'pinned' : ''} ${msg.reply_context && msg.replies?.length ? 'has-reply' : ''} ${msg._optimistic ? 'msg-optimistic' : ''}`} onContextMenu={(e) => handleContextMenu(e, msg)}>
               {renderReplyContext(msg)}
@@ -1166,12 +1182,12 @@ export default function ChatArea({ channelId, serverRoles, onChannelAccessLost }
                 <div
                   className="msg-avatar"
                   onClick={(e) => {
-                    const authorObj = typeof msg.author === 'object' ? msg.author : null;
                     if (!authorObj) return;
                     openUserCard(authorObj, e.currentTarget.getBoundingClientRect());
                   }}
                 >
                   {getAuthorAvatarUrl(msg) ? <img src={getAuthorAvatarUrl(msg)} alt="" className="msg-avatar-img" /> : getAuthorInitial(msg)}
+                  {isServerOwnerMessage && <ServerOwnerCrown size="message" />}
                 </div>
               )}
               <div className={`msg-content ${showHeader ? '' : 'no-avatar'}`}>
@@ -1194,6 +1210,17 @@ export default function ChatArea({ channelId, serverRoles, onChannelAccessLost }
                         </svg>
                         BOT
                       </span>
+                    )}
+                    {messageAuthorVerifiedBot(msg) && (
+                      <span className="verified-bot-badge" title="Verified bot">
+                        <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" className="verified-bot-check">
+                          <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                        </svg>
+                        Verified
+                      </span>
+                    )}
+                    {messageAuthorStaff(msg) && (
+                      <span className="opic-staff-badge" title="Opic Staff">Staff</span>
                     )}
                     <span className="msg-time">{formatTime(msg)}</span>
                     {msg.edited && <span className="msg-edited">(edited)</span>}
@@ -1460,7 +1487,7 @@ export default function ChatArea({ channelId, serverRoles, onChannelAccessLost }
       {lightboxSrc && <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
     </div>
     {openThread && (
-      <ThreadPanel threadChannel={openThread} onClose={() => setOpenThread(null)} customEmojis={customEmojis} />
+      <ThreadPanel threadChannel={openThread} onClose={() => setOpenThread(null)} customEmojis={customEmojis} serverOwnerId={serverOwnerId} />
     )}
     </>
   );

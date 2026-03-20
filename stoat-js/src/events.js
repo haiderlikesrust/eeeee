@@ -78,14 +78,15 @@ export function createEventServer(server) {
     let userId = null;
     let kind = null;
     let key = null;
+    let sessionDoc = null;
 
     if (sessionToken) {
-      const session = await Session.findOne({ token: sessionToken }).lean();
-      if (!session) {
+      sessionDoc = await Session.findOne({ token: sessionToken }).lean();
+      if (!sessionDoc) {
         ws.close(4001, 'Invalid session');
         return;
       }
-      userId = session.user_id;
+      userId = sessionDoc.user_id;
       kind = 'user';
       key = `user:${sessionToken}`;
     } else if (botToken) {
@@ -103,6 +104,17 @@ export function createEventServer(server) {
     }
 
     const user = await User.findById(userId).lean();
+    if (!user) {
+      ws.close(4001, 'User not found');
+      return;
+    }
+    if (kind === 'user' && user.disabled) {
+      if (sessionDoc?._id) {
+        await Session.deleteOne({ _id: sessionDoc._id }).catch(() => {});
+      }
+      ws.close(4003, 'Account disabled');
+      return;
+    }
     const memberships = await Member.find({ user: userId }).lean();
     const serverIds = memberships.map((m) => m.server);
     clients.set(key, { ws, kind, userId, lastPing: Date.now(), intents: Number.isFinite(intents) ? intents : 0, serverIds });

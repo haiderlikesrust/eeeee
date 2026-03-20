@@ -15,6 +15,7 @@ export function normalizeProfileForOutput(profile) {
     social_links: Array.isArray(p.social_links) ? p.social_links : [],
     theme_preset: p.theme_preset ?? null,
     badges: Array.isArray(p.badges) ? p.badges : [],
+    hide_server_owner_crown: !!p.hide_server_owner_crown,
   };
   return out;
 }
@@ -68,9 +69,12 @@ export function toPublicUser(doc, options = {}) {
   const systemBadges = Array.isArray(u.system_badges)
     ? u.system_badges.filter((x) => typeof x === 'string' && x.trim())
     : [];
-  const bot = (typeof u?.bot?.owner === 'string' && u.bot.owner.trim())
-    ? { owner: u.bot.owner }
+  const hasBotOwner = typeof u?.bot?.owner === 'string' && u.bot.owner.trim();
+  const officialBot = !!u?.bot?.official;
+  const bot = hasBotOwner
+    ? { owner: u.bot.owner, ...(officialBot ? { official: true } : {}) }
     : null;
+  const verified_bot = !!(hasBotOwner && officialBot);
   return {
     _id: u._id,
     username: u.username,
@@ -85,6 +89,7 @@ export function toPublicUser(doc, options = {}) {
     flags: u.flags ?? 0,
     privileged: u.privileged ?? false,
     bot,
+    verified_bot,
     relationship: options.relationship ?? 'None',
     online: options.online ?? false,
     presence_api_token_configured: Boolean(u.presence_api_token),

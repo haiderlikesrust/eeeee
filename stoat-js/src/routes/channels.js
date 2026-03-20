@@ -42,7 +42,7 @@ async function getChannelPerms(ch, userId) {
   return { perms: computeChannelPermissions(server, member, ch), server, member };
 }
 
-function messageToJson(m, authorMap = {}, replyContext = null) {
+export function messageToJson(m, authorMap = {}, replyContext = null) {
   const a = m.author && authorMap[m.author];
   const reactions = m.reactions instanceof Map
     ? Object.fromEntries(m.reactions.entries())
@@ -71,7 +71,7 @@ function messageToJson(m, authorMap = {}, replyContext = null) {
   return obj;
 }
 
-async function fetchReplyContext(replyIds, authorMap) {
+export async function fetchReplyContext(replyIds, authorMap) {
   if (!replyIds || replyIds.length === 0) return null;
   const ids = replyIds.map((r) => (typeof r === 'object' ? r.id : r)).filter(Boolean);
   if (ids.length === 0) return null;

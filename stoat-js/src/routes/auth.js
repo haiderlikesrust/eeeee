@@ -102,6 +102,12 @@ router.post('/session/login', async (req, res) => {
     }
     const user = await User.findById(account.user_id).lean();
     if (!user) return res.status(500).json({ type: 'InternalError', error: 'User not found' });
+    if (user.disabled) {
+      return res.status(403).json({
+        type: 'AccountDisabled',
+        error: user.disabled_reason?.trim() || 'This account has been disabled.',
+      });
+    }
     const sessionId = ulid();
     const token = randomToken();
     await Session.create({

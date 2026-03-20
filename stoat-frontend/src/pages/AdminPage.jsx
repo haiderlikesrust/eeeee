@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import { clearSystemBadgeCache } from '../utils/systemBadges';
+import { OPIC_STAFF_BADGE_ID, userHasOpicStaff } from '../utils/opicStaff';
 import { useToast } from '../context/ToastContext';
 import './AdminPage.css';
 
@@ -70,6 +71,25 @@ export default function AdminPage() {
 
   const [activeTab, setActiveTab] = useState('overview');
 
+  const [officialClawId, setOfficialClawId] = useState('');
+  const [clawUser, setClawUser] = useState(null);
+  const [clawDraft, setClawDraft] = useState({
+    display_name: '',
+    username: '',
+    discriminator: '',
+    bio: '',
+  });
+  const [loadingClaw, setLoadingClaw] = useState(false);
+  const [savingClaw, setSavingClaw] = useState(false);
+  const [clawChannelId, setClawChannelId] = useState('');
+  const [clawMessageContent, setClawMessageContent] = useState('');
+  const [sendingClawMsg, setSendingClawMsg] = useState(false);
+  const [userDisableReasonDraft, setUserDisableReasonDraft] = useState({});
+
+  const [staffQuery, setStaffQuery] = useState('');
+  const [staffResults, setStaffResults] = useState([]);
+  const [searchingStaff, setSearchingStaff] = useState(false);
+
   const [reportList, setReportList] = useState([]);
   const [reportTotal, setReportTotal] = useState(0);
   const [loadingReports, setLoadingReports] = useState(false);
@@ -81,7 +101,9 @@ export default function AdminPage() {
   const tabs = useMemo(
     () => [
       { id: 'overview', label: 'Overview' },
+      { id: 'claw', label: 'Claw' },
       { id: 'badges', label: 'Badges' },
+      { id: 'staff', label: 'Staff' },
       { id: 'users', label: 'Users' },
       { id: 'moderation', label: 'Moderation' },
     ],
@@ -128,9 +150,113 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
+    if (!token || !me) return;
+    adminFetch('/claw', { token })
+      .then((d) => {
+        if (d?.user?._id) setOfficialClawId(d.user._id);
+      })
+      .catch(() => {});
+  }, [token, me]);
+
+  useEffect(() => {
     if (!token || !me || activeTab !== 'moderation') return;
     loadReportList();
   }, [activeTab, token, me]);
+
+  useEffect(() => {
+    if (!token || !me || activeTab !== 'claw') return;
+    loadClaw();
+  }, [activeTab, token, me]);
+
+  async function loadClaw() {
+    setLoadingClaw(true);
+    try {
+      const data = await adminFetch('/claw', { token });
+      const u = data?.user;
+      setClawUser(u || null);
+      if (u?._id) setOfficialClawId(u._id);
+      if (u) {
+        setClawDraft({
+          display_name: u.display_name || '',
+          username: u.username || '',
+          discriminator: u.discriminator || '',
+          bio: u.profile?.bio || '',
+        });
+      }
+    } catch (err) {
+      toast.error(err?.error || 'Failed to load Claw');
+      setClawUser(null);
+    }
+    setLoadingClaw(false);
+  }
+
+  async function saveClawProfile() {
+    if (!clawDraft.username.trim()) {
+      toast.error('Username is required');
+      return;
+    }
+    setSavingClaw(true);
+    try {
+      const data = await adminFetch('/claw', {
+        method: 'PATCH',
+        token,
+        body: {
+          display_name: clawDraft.display_name.trim() || null,
+          username: clawDraft.username.trim(),
+          discriminator: clawDraft.discriminator.trim() || '0000',
+          profile: { bio: clawDraft.bio.trim() || null },
+        },
+      });
+      const u = data?.user;
+      if (u) {
+        setClawUser(u);
+        toast.success('Claw profile updated');
+      }
+    } catch (err) {
+      toast.error(err?.error || 'Failed to save Claw');
+    }
+    setSavingClaw(false);
+  }
+
+  async function uploadClawAvatar(file) {
+    if (!file) return;
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const uploaded = await adminFetch('/upload', { method: 'POST', body: form, token, isForm: true });
+      await adminFetch('/claw', {
+        method: 'PATCH',
+        token,
+        body: { avatar: uploaded },
+      });
+      await loadClaw();
+      toast.success('Claw avatar updated');
+    } catch (err) {
+      toast.error(err?.error || 'Avatar upload failed');
+    }
+  }
+
+  async function sendClawMessage() {
+    const cid = clawChannelId.trim();
+    const text = clawMessageContent.trim();
+    if (!cid || !text) {
+      toast.error('Channel ID and message are required');
+      return;
+    }
+    setSendingClawMsg(true);
+    try {
+      await adminFetch('/claw/messages', {
+        method: 'POST',
+        token,
+        body: { channel_id: cid, content: text },
+      });
+      setClawMessageContent('');
+      toast.success('Message sent as Claw');
+    } catch (err) {
+      toast.error(err?.error || 'Failed to send message');
+    }
+    setSendingClawMsg(false);
+  }
 
   async function loadBadges(activeToken = token) {
     setLoadingBadges(true);
@@ -217,6 +343,32 @@ export default function AdminPage() {
       toast.success(privileged ? 'User marked as privileged' : 'Privileged access removed');
     } catch (err) {
       toast.error(err?.error || 'Failed to update user');
+    }
+  }
+
+  async function setUserDisabled(userId, disabled) {
+    if (userId === officialClawId) {
+      toast.error('Cannot disable the official Claw account');
+      return;
+    }
+    try {
+      const reason = disabled ? (userDisableReasonDraft[userId] || '').trim() : '';
+      const updated = await adminFetch(`/users/${userId}`, {
+        method: 'PATCH',
+        token,
+        body: {
+          disabled,
+          disabled_reason: disabled ? (reason || null) : null,
+        },
+      });
+      setUserResults((prev) => prev.map((u) => (u._id === userId ? { ...u, ...updated } : u)));
+      setUserDisableReasonDraft((prev) => ({
+        ...prev,
+        [userId]: updated.disabled_reason || '',
+      }));
+      toast.success(disabled ? 'User disabled — they cannot log in or use the API' : 'User re-enabled');
+    } catch (err) {
+      toast.error(err?.error || 'Failed to update account status');
     }
   }
 
@@ -314,7 +466,44 @@ export default function AdminPage() {
     }
   };
 
+  async function searchStaffUsers() {
+    setSearchingStaff(true);
+    try {
+      const q = encodeURIComponent(staffQuery.trim());
+      const users = await adminFetch(`/users${q ? `?q=${q}` : ''}`, { token });
+      setStaffResults(Array.isArray(users) ? users : []);
+    } catch (err) {
+      toast.error(err?.error || 'Failed to search users');
+      setStaffResults([]);
+    }
+    setSearchingStaff(false);
+  }
+
+  async function toggleUserStaff(userId, enabled) {
+    const u = staffResults.find((x) => x._id === userId);
+    if (!u) return;
+    const next = new Set(Array.isArray(u.system_badges) ? u.system_badges : []);
+    if (enabled) next.add(OPIC_STAFF_BADGE_ID);
+    else next.delete(OPIC_STAFF_BADGE_ID);
+    try {
+      const updated = await adminFetch(`/users/${userId}/badges`, {
+        method: 'PATCH',
+        token,
+        body: { badges: [...next] },
+      });
+      setStaffResults((prev) => prev.map((x) => (x._id === userId ? { ...x, system_badges: updated.system_badges || [] } : x)));
+      clearSystemBadgeCache();
+      toast.success(enabled ? 'User marked as Opic Staff' : 'Opic Staff removed');
+    } catch (err) {
+      toast.error(err?.error || 'Failed to update staff badge');
+    }
+  }
+
   const deleteBadge = async (badgeId) => {
+    if (badgeId === OPIC_STAFF_BADGE_ID) {
+      toast.error('The Opic Staff badge cannot be deleted');
+      return;
+    }
     if (!confirm(`Delete badge "${badgeId}"?`)) return;
     try {
       await adminFetch(`/badges/${badgeId}`, { method: 'DELETE', token });
@@ -333,8 +522,13 @@ export default function AdminPage() {
       const users = await adminFetch(`/users${q ? `?q=${q}` : ''}`, { token });
       setUserResults(Array.isArray(users) ? users : []);
       const draft = {};
-      (users || []).forEach((u) => { draft[u._id] = Array.isArray(u.system_badges) ? u.system_badges : []; });
+      const disableDraft = {};
+      (users || []).forEach((u) => {
+        draft[u._id] = Array.isArray(u.system_badges) ? u.system_badges : [];
+        disableDraft[u._id] = u.disabled_reason || '';
+      });
       setUserBadgeDrafts(draft);
+      setUserDisableReasonDraft(disableDraft);
     } catch (err) {
       toast.error(err?.error || 'Failed to search users');
     }
@@ -531,6 +725,108 @@ export default function AdminPage() {
       </section>
       )}
 
+      {activeTab === 'claw' && (
+      <section className="admin-section admin-claw">
+        <h2>Official bot — Claw</h2>
+        <p className="admin-section-intro">
+          Platform bot (like Discord&rsquo;s Clyde). Edit its profile, send announcements to any server text channel by ID, and disable abusive accounts under <strong>Users</strong>.
+        </p>
+        {loadingClaw && !clawUser ? (
+          <p className="admin-stats-loading">Loading Claw…</p>
+        ) : clawUser ? (
+          <div className="admin-claw-grid">
+            <div className="admin-claw-card">
+              <h3>Profile</h3>
+              <div className="admin-claw-avatar-row">
+                {clawUser.avatar?.url || clawUser.avatar?._id ? (
+                  <img src={resolveFileUrl(clawUser.avatar)} alt="" className="admin-claw-avatar-preview" />
+                ) : (
+                  <div className="admin-claw-avatar-placeholder">{(clawUser.display_name || clawUser.username || 'C')[0]}</div>
+                )}
+                <label className="admin-upload-btn">
+                  Change avatar
+                  <input
+                    type="file"
+                    accept="image/png,image/webp,image/gif,image/jpeg,image/svg+xml"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      if (f) await uploadClawAvatar(f);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+              <label className="admin-claw-field">
+                <span>Display name</span>
+                <input
+                  value={clawDraft.display_name}
+                  onChange={(e) => setClawDraft((d) => ({ ...d, display_name: e.target.value }))}
+                />
+              </label>
+              <label className="admin-claw-field">
+                <span>Username</span>
+                <input
+                  value={clawDraft.username}
+                  onChange={(e) => setClawDraft((d) => ({ ...d, username: e.target.value }))}
+                />
+              </label>
+              <label className="admin-claw-field">
+                <span>Discriminator</span>
+                <input
+                  value={clawDraft.discriminator}
+                  onChange={(e) => setClawDraft((d) => ({ ...d, discriminator: e.target.value }))}
+                  maxLength={4}
+                />
+              </label>
+              <label className="admin-claw-field">
+                <span>Bio</span>
+                <textarea
+                  rows={3}
+                  value={clawDraft.bio}
+                  onChange={(e) => setClawDraft((d) => ({ ...d, bio: e.target.value }))}
+                />
+              </label>
+              <button type="button" className="admin-primary-btn" onClick={saveClawProfile} disabled={savingClaw}>
+                {savingClaw ? 'Saving…' : 'Save profile'}
+              </button>
+              <p className="admin-claw-meta">
+                <code>User id:</code> {clawUser._id}
+                {clawUser.verified_bot && <span className="admin-claw-verified-pill">Verified bot</span>}
+              </p>
+            </div>
+            <div className="admin-claw-card">
+              <h3>Send as Claw</h3>
+              <p className="admin-claw-hint">
+                Posts in a server text channel or thread without Claw being a member. Use the channel id from the URL or API.
+              </p>
+              <label className="admin-claw-field">
+                <span>Channel ID</span>
+                <input
+                  placeholder="e.g. 01HQ…"
+                  value={clawChannelId}
+                  onChange={(e) => setClawChannelId(e.target.value)}
+                />
+              </label>
+              <label className="admin-claw-field">
+                <span>Message</span>
+                <textarea
+                  rows={4}
+                  placeholder="Announcement text…"
+                  value={clawMessageContent}
+                  onChange={(e) => setClawMessageContent(e.target.value)}
+                />
+              </label>
+              <button type="button" className="admin-primary-btn" onClick={sendClawMessage} disabled={sendingClawMsg}>
+                {sendingClawMsg ? 'Sending…' : 'Send message'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="admin-empty">Could not load Claw.</p>
+        )}
+      </section>
+      )}
+
       {activeTab === 'badges' && (
       <section className="admin-section">
         <h2>Global Badge Catalog</h2>
@@ -574,7 +870,12 @@ export default function AdminPage() {
                   {badge.icon?.url ? <img src={resolveFileUrl(badge.icon)} alt="" /> : <span>🏷️</span>}
                 </div>
                 <div className="admin-badge-fields">
-                  <div className="admin-badge-id">{badge.id}</div>
+                  <div className="admin-badge-id">
+                    {badge.id}
+                    {badge.id === OPIC_STAFF_BADGE_ID && (
+                      <span className="admin-badge-reserved" title="Created automatically; assign users in Staff tab">Reserved</span>
+                    )}
+                  </div>
                   <input
                     value={badge.label}
                     onChange={(e) => setBadges((prev) => prev.map((b) => b.id === badge.id ? { ...b, label: e.target.value } : b))}
@@ -608,12 +909,21 @@ export default function AdminPage() {
                     <input
                       type="checkbox"
                       checked={badge.active !== false}
+                      disabled={badge.id === OPIC_STAFF_BADGE_ID}
                       onChange={(e) => setBadges((prev) => prev.map((b) => b.id === badge.id ? { ...b, active: e.target.checked } : b))}
                     />
                     Active
                   </label>
                   <button onClick={() => saveBadge(badge)}>Save</button>
-                  <button className="admin-danger-btn" onClick={() => deleteBadge(badge.id)}>Delete</button>
+                  <button
+                    type="button"
+                    className="admin-danger-btn"
+                    onClick={() => deleteBadge(badge.id)}
+                    disabled={badge.id === OPIC_STAFF_BADGE_ID}
+                    title={badge.id === OPIC_STAFF_BADGE_ID ? 'Reserved system badge' : undefined}
+                  >
+                    Delete
+                  </button>
                 </div>
               </div>
             ))}
@@ -622,10 +932,57 @@ export default function AdminPage() {
       </section>
       )}
 
+      {activeTab === 'staff' && (
+      <section className="admin-section">
+        <h2>Opic Staff</h2>
+        <p className="admin-section-intro">
+          Search users and toggle the <strong>Opic Staff</strong> badge (<code>{OPIC_STAFF_BADGE_ID}</code>). Staff show a gold <strong>STAFF</strong> tag in chat and member lists. The badge is created automatically when the API starts.
+        </p>
+        <div className="admin-user-search">
+          <input
+            placeholder="Search by username, display name, or user id (empty = first 30 users)"
+            value={staffQuery}
+            onChange={(e) => setStaffQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && searchStaffUsers()}
+          />
+          <button type="button" onClick={searchStaffUsers} disabled={searchingStaff}>
+            {searchingStaff ? 'Searching…' : 'Search'}
+          </button>
+        </div>
+        <div className="admin-user-list">
+          {staffResults.length === 0 ? (
+            <p className="admin-empty">Search to list users, then toggle Opic Staff.</p>
+          ) : (
+            staffResults.map((u) => (
+              <div key={u._id} className="admin-user-item admin-staff-user-item">
+                <div className="admin-user-head">
+                  <div className="admin-staff-user-meta">
+                    <strong>{u.display_name || u.username}</strong>
+                    <span>{u.username}#{u.discriminator}</span>
+                    <code>{u._id}</code>
+                  </div>
+                  <label className="admin-checkbox admin-staff-toggle">
+                    <input
+                      type="checkbox"
+                      checked={userHasOpicStaff(u)}
+                      onChange={(e) => toggleUserStaff(u._id, e.target.checked)}
+                    />
+                    Opic Staff
+                  </label>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+      )}
+
       {activeTab === 'users' && (
       <section className="admin-section">
         <h2>Users</h2>
-        <p className="admin-section-intro">Search accounts, assign global badges, or grant privileged access.</p>
+        <p className="admin-section-intro">
+          Search accounts, assign global badges, grant privileged access, or <strong>disable</strong> accounts (blocks login and all API access).
+        </p>
         <div className="admin-user-search">
           <input
             placeholder="Search by username, display name, or user id"
@@ -650,7 +1007,39 @@ export default function AdminPage() {
                   />
                   Privileged
                 </label>
+                <label className={`admin-checkbox admin-disabled${u._id === officialClawId ? ' admin-checkbox-disabled' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!u.disabled}
+                    disabled={u._id === officialClawId}
+                    onChange={(e) => setUserDisabled(u._id, e.target.checked)}
+                  />
+                  Account disabled
+                </label>
               </div>
+              {u._id !== officialClawId && (
+                <div className="admin-user-disable-row">
+                  <input
+                    className="admin-disable-reason-input"
+                    placeholder="Optional reason (stored when you disable the account)"
+                    value={
+                      userDisableReasonDraft[u._id] !== undefined
+                        ? userDisableReasonDraft[u._id]
+                        : (u.disabled_reason || '')
+                    }
+                    onChange={(e) => setUserDisableReasonDraft((prev) => ({ ...prev, [u._id]: e.target.value }))}
+                  />
+                  {u.disabled && (
+                    <button
+                      type="button"
+                      className="admin-link-btn admin-disable-reason-save"
+                      onClick={() => setUserDisabled(u._id, true)}
+                    >
+                      Update reason
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="admin-user-badges">
                 {activeBadges.map((b) => {
                   const checked = (userBadgeDrafts[u._id] || []).includes(b.id);

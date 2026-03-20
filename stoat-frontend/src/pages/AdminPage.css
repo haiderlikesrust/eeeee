@@ -528,6 +528,41 @@
   color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-badge-reserved {
+  font-family: system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(240, 180, 41, 0.2);
+  color: #e8c547;
+}
+
+.admin-staff-user-item .admin-user-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-staff-user-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.admin-staff-toggle {
+  flex-shrink: 0;
 }
 
 .admin-badge-fields input,
@@ -665,7 +700,156 @@
     flex-direction: column;
   }
 
+  .admin-claw-grid {
+    grid-template-columns: 1fr;
+  }
+
   .admin-badge-actions {
     flex-wrap: wrap;
   }
+}
+
+.admin-primary-btn {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.admin-primary-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.admin-primary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.admin-claw-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+  margin-top: 16px;
+}
+
+.admin-claw-card {
+  border: 1px solid var(--input-border);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-claw-card h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.admin-claw-hint,
+.admin-claw-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.admin-claw-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-claw-verified-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(88, 101, 242, 0.22);
+  color: #a5b4fc;
+}
+
+.admin-claw-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-claw-avatar-preview {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: var(--bg-primary);
+}
+
+.admin-claw-avatar-placeholder {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  background: var(--accent-muted);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.admin-claw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.admin-claw-field input,
+.admin-claw-field textarea {
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.admin-checkbox-disabled {
+  opacity: 0.5;
+}
+
+.admin-user-disable-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.admin-disable-reason-input {
+  flex: 1;
+  min-width: 180px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.admin-disable-reason-save {
+  font-size: 12px;
 }

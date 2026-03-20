@@ -13,12 +13,11 @@ import ServerSettings from './ServerSettings';
 import UserSettings from './UserSettings';
 import VoicePanel from './VoicePanel';
 import ProfileCard from './ProfileCard';
+import { isBotUser, isVerifiedBotUser } from '../utils/botDisplay';
+import { userHasOpicStaff } from '../utils/opicStaff';
+import ServerOwnerCrown from './ServerOwnerCrown';
+import { showServerOwnerCrownForUser } from '../utils/serverOwnerCrownDisplay';
 import './ChannelSidebar.css';
-
-function isBotUser(userObj) {
-  const owner = userObj?.bot?.owner;
-  return typeof owner === 'string' && owner.trim().length > 0;
-}
 
 function VoiceChannelTimer({ startTime }) {
   const [elapsed, setElapsed] = useState(0);
@@ -364,7 +363,7 @@ function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreate
                       )}
                     </div>
                     {membersInChannel.length > 0 && (
-                      <VoiceChannelMembers memberIds={membersInChannel} channelId={ch._id} />
+                      <VoiceChannelMembers memberIds={membersInChannel} channelId={ch._id} serverOwnerId={server?.owner} />
                     )}
                   </div>
                 );
@@ -481,7 +480,7 @@ function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreate
   );
 }
 
-function VoiceChannelMembers({ memberIds, channelId }) {
+function VoiceChannelMembers({ memberIds, channelId, serverOwnerId }) {
   const voice = useVoice();
   const [users, setUsers] = useState({});
   const [profileCard, setProfileCard] = useState(null);
@@ -538,14 +537,30 @@ function VoiceChannelMembers({ memberIds, channelId }) {
                 ) : (
                   <span className="voice-member-avatar-initial">{(u?.display_name || u?.username || '?')[0].toUpperCase()}</span>
                 )}
+                {showServerOwnerCrownForUser(u, serverOwnerId, uid) && <ServerOwnerCrown size="voice" />}
               </div>
               <span className="voice-member-name">{u?.display_name || u?.username || uid.slice(0, 6)}</span>
-              {isBotUser(u) && (
-                <span className="voice-member-bot-badge" title="Bot">
-                  <svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true">
-                    <use href="/icons.svg#bot-icon" />
-                  </svg>
-                  BOT
+              {(isBotUser(u) || isVerifiedBotUser(u) || userHasOpicStaff(u)) && (
+                <span className="voice-member-badges">
+                  {isBotUser(u) && (
+                    <span className="voice-member-bot-badge" title="Bot">
+                      <svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true">
+                        <use href="/icons.svg#bot-icon" />
+                      </svg>
+                      BOT
+                    </span>
+                  )}
+                  {isVerifiedBotUser(u) && (
+                    <span className="voice-member-verified-badge" title="Verified bot">
+                      <svg width="9" height="9" viewBox="0 0 24 24" aria-hidden="true">
+                        <path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                      </svg>
+                      Verified
+                    </span>
+                  )}
+                  {userHasOpicStaff(u) && (
+                    <span className="voice-member-staff-badge" title="Opic Staff">Staff</span>
+                  )}
                 </span>
               )}
             </div>

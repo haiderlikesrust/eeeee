@@ -46,6 +46,8 @@ const userProfileSchema = new mongoose.Schema({
   }],
   theme_preset: String,
   badges: [String],
+  /** When true, server owner crown is not shown on this user's avatar (API + all clients). */
+  hide_server_owner_crown: { type: Boolean, default: false },
 }, { _id: false });
 
 const fileSchema = new mongoose.Schema({
@@ -60,6 +62,8 @@ const fileSchema = new mongoose.Schema({
 
 const botSchema = new mongoose.Schema({
   owner: String,
+  /** Platform-owned bot (e.g. Claw); shows verified badge; not tied to a user app. */
+  official: { type: Boolean, default: false },
 }, { _id: false });
 
 const userSchema = new mongoose.Schema({
@@ -75,6 +79,9 @@ const userSchema = new mongoose.Schema({
   system_badges: { type: [String], default: [] },
   flags: { type: Number, default: 0 },
   privileged: { type: Boolean, default: false },
+  /** When true, login and API sessions are rejected (admin moderation). */
+  disabled: { type: Boolean, default: false },
+  disabled_reason: { type: String, default: null },
   bot: { type: botSchema, default: null },
   last_acknowledged_policy_change: { type: Date, default: () => new Date(0) },
   /** Secret for PATCH /public/v1/presence (Bearer or X-Presence-Token). */

@@ -63,6 +63,7 @@ export default function UserSettings({ onClose }) {
   );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [hideServerOwnerCrown, setHideServerOwnerCrown] = useState(!!user?.profile?.hide_server_owner_crown);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -118,6 +119,10 @@ export default function UserSettings({ onClose }) {
     if (tab === 'sessions') loadSessions();
   }, [tab]);
 
+  useEffect(() => {
+    setHideServerOwnerCrown(!!user?.profile?.hide_server_owner_crown);
+  }, [user?.profile?.hide_server_owner_crown]);
+
   const loadSessions = async () => {
     try {
       const res = await get('/auth/session');
@@ -150,6 +155,7 @@ export default function UserSettings({ onClose }) {
         effect: effect || null,
         social_links: socialLinks.filter((l) => l.url?.trim()).map((l) => ({ label: l.label || 'Link', url: l.url.trim() })),
         banner: bannerAsset || (bannerUrl ? { url: bannerUrl } : null),
+        hide_server_owner_crown: hideServerOwnerCrown,
       };
       const updated = await patch('/users/@me', body);
       if (updated) setUser((prev) => ({ ...prev, ...updated }));
@@ -283,10 +289,26 @@ export default function UserSettings({ onClose }) {
                       effect: effect || null,
                       social_links: socialLinks.filter((l) => l.url?.trim()).map((l) => ({ label: l.label || 'Link', url: l.url.trim() })),
                       banner: bannerAsset || (bannerUrl ? { url: bannerUrl } : null),
+                      hide_server_owner_crown: hideServerOwnerCrown,
                     },
                   }}
                   showActions={false}
                 />
+              </div>
+
+              <div className="user-settings-privacy-toggle">
+                <input
+                  id="hide-server-owner-crown"
+                  type="checkbox"
+                  checked={hideServerOwnerCrown}
+                  onChange={(e) => setHideServerOwnerCrown(e.target.checked)}
+                />
+                <label htmlFor="hide-server-owner-crown" className="user-settings-privacy-toggle-text">
+                  <strong>Hide server owner crown</strong>
+                  <span className="settings-hint">
+                    When you own a server, the gold crown won&apos;t appear on your avatar for other members (member list, chat, voice sidebar, etc.). Save profile to apply.
+                  </span>
+                </label>
               </div>
 
               <label className="auth-label">
