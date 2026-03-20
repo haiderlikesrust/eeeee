@@ -57,7 +57,9 @@ export async function api(method, path, body) {
 
 export async function get(path) {
   // Message lists change constantly; caching caused stale polls to wipe optimistic / new sends.
-  const skipCache = path.includes('/messages') || path.includes('/ofeed');
+  // Member lists are updated live via PresenceUpdate + refetch — caching returned stale rows for minutes until refresh.
+  const skipCache =
+    path.includes('/messages') || path.includes('/ofeed') || path.includes('/members');
   if (!skipCache) {
     const cached = getCache.get(path);
     if (cached && Date.now() < cached.expires) return cached.data;

@@ -6,7 +6,7 @@ import {
 } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { toPublicUser } from '../publicUser.js';
-import { broadcastToChannel, broadcastToServer, GatewayIntents, isUserOnline } from '../events.js';
+import { broadcastToChannel, broadcastToServer, GatewayIntents, isUserOnlineDisplay } from '../events.js';
 import { notifyPushForNewMessage } from '../pushNotify.js';
 import { fetchLinkPreviewsForContent } from '../linkPreview.js';
 import {
@@ -122,7 +122,7 @@ router.get('/:target', authMiddleware(), async (req, res) => {
     if (otherId) {
       const otherUser = await User.findById(otherId).lean();
       if (otherUser) {
-        out.other_user = toPublicUser(otherUser, { relationship: 'None', online: isUserOnline(otherId) });
+        out.other_user = toPublicUser(otherUser, { relationship: 'None', online: isUserOnlineDisplay(otherId, otherUser) });
       }
     }
   }

@@ -6,6 +6,7 @@ import { useVoice } from '../context/VoiceContext';
 import { useMobile } from '../context/MobileContext';
 import { useUnread } from '../context/UnreadContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
+import { formatActivityPrimary } from '../utils/activityDisplay';
 import { Permissions, hasPermission, hasServerPermission } from '../utils/permissions';
 import { get, post, patch, del } from '../api';
 import ServerSettings from './ServerSettings';
@@ -621,6 +622,11 @@ function UserPanel({ user }) {
           title="View profile"
         >
           <div className="user-panel-name">{user.display_name || user.username}</div>
+          {formatActivityPrimary(user?.status?.activity) && (
+            <div className="user-panel-activity" title={formatActivityPrimary(user.status.activity)}>
+              {formatActivityPrimary(user.status.activity)}
+            </div>
+          )}
           <div className="user-panel-tag">
             {ws?.connected ? (
               <span className="user-panel-ping" style={{ color: getPingColor() }} title={`Ping: ${ws.ping ?? '...'}ms | Status: Connected`}>

@@ -5,6 +5,9 @@ import { useMobile } from '../context/MobileContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import { get } from '../api';
 import ProfileCard from './ProfileCard';
+import { activityTypeLabel, formatActivityPrimary, formatActivitySecondary, resolveActivityImageUrl } from '../utils/activityDisplay';
+import ActivityElapsed from './ActivityElapsed';
+import ActivityMiniIcon from './ActivityMiniIcon';
 import './MemberSidebar.css';
 
 export default function MemberSidebar({ members, serverRoles }) {
@@ -63,6 +66,13 @@ export default function MemberSidebar({ members, serverRoles }) {
     const u = typeof m.user === 'object' ? m.user : null;
     const t = u?.status?.text;
     return typeof t === 'string' && t.trim() ? t.trim() : null;
+  };
+
+  const getActivity = (m) => {
+    const u = typeof m.user === 'object' ? m.user : null;
+    const a = u?.status?.activity;
+    if (!a?.type || !a?.name?.trim()) return null;
+    return a;
   };
 
   const getMemberRoles = (m) => (m.roles || [])
@@ -153,6 +163,7 @@ export default function MemberSidebar({ members, serverRoles }) {
               isOnline={isOnlineMember(m)}
               presence={getPresence(m)}
               statusText={getStatusText(m)}
+              activity={getActivity(m)}
             />
           ))}
         </div>
@@ -175,6 +186,7 @@ export default function MemberSidebar({ members, serverRoles }) {
               isOnline={true}
               presence={getPresence(m)}
               statusText={getStatusText(m)}
+              activity={getActivity(m)}
             />
           ))}
         </>
@@ -197,6 +209,7 @@ export default function MemberSidebar({ members, serverRoles }) {
               isOnline={false}
               presence="offline"
               statusText={getStatusText(m)}
+              activity={getActivity(m)}
             />
           ))}
         </>
@@ -205,7 +218,8 @@ export default function MemberSidebar({ members, serverRoles }) {
   );
 }
 
-function MemberItem({ member, roleMap, name, initial, topColor, avatarUrl, isBot, isOnline, presence = 'offline', statusText }) {
+function MemberItem({ member, roleMap, name, initial, topColor, avatarUrl, isBot, isOnline, presence = 'offline', statusText, activity }) {
+  const activityImg = activity ? resolveActivityImageUrl(activity.image) : null;
   const [showPopup, setShowPopup] = useState(false);
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -266,10 +280,43 @@ function MemberItem({ member, roleMap, name, initial, topColor, avatarUrl, isBot
               </span>
             )}
           </div>
-          {statusText && (
-            <div className="member-status-text" title={statusText}>
-              <span className="member-status-icon" aria-hidden="true">◆</span>
-              {statusText}
+          {(activity || statusText) && (
+            <div className={`member-rich-presence${activity && statusText ? ' member-rich-presence-both' : ''}`}>
+              {activity && (
+                <div
+                  className="member-activity-card"
+                  title={`${formatActivityPrimary(activity) || ''}${formatActivitySecondary(activity) ? ` — ${formatActivitySecondary(activity)}` : ''}`}
+                >
+                  <div className="member-activity-card-art">
+                    {activityImg ? (
+                      <img src={activityImg} alt="" className="member-activity-art-img" />
+                    ) : (
+                      <div className="member-activity-art-fallback" aria-hidden="true">
+                        <ActivityMiniIcon type={activity.type} size={22} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="member-activity-card-body">
+                    <div className="member-activity-k">{activityTypeLabel(activity.type)}</div>
+                    <div className="member-activity-title">{activity.name}</div>
+                    {formatActivitySecondary(activity) && (
+                      <div className="member-activity-sub">{formatActivitySecondary(activity)}</div>
+                    )}
+                    {activity.started_at && (
+                      <div className="member-activity-elapsed" title="Time in this session">
+                        <ActivityElapsed startedAt={activity.started_at} />
+                        <span className="member-activity-elapsed-suffix">elapsed</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {statusText && (
+                <div className={`member-custom-status-line ${activity ? 'with-activity' : ''}`} title={statusText}>
+                  <span className="member-custom-status-dot" aria-hidden="true">◆</span>
+                  <span className="member-custom-status-text">{statusText}</span>
+                </div>
+              )}
             </div>
           )}
         </div>

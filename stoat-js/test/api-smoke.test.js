@@ -15,3 +15,8 @@ test('GET /health is ok', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.body.status, 'ok');
 });
+
+test('PATCH /public/v1/presence requires token', async () => {
+  const res = await request(app).patch('/public/v1/presence').send({ activity: null });
+  assert.equal(res.status, 401);
+});

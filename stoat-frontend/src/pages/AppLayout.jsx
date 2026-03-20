@@ -26,7 +26,7 @@ export default function AppLayout() {
 }
 
 function AppLayoutInner() {
-  const { user, fetchUser } = useAuth();
+  const { user, fetchUser, setUser } = useAuth();
   const { on } = useWS();
   const location = useLocation();
   const navigate = useNavigate();
@@ -51,6 +51,16 @@ function AppLayoutInner() {
     setDeepLinkPostId?.(postId);
     window.history.replaceState(null, '', location.pathname + location.search);
   }, [location.pathname, location.hash, navigate, setOfeedOpen, setDeepLinkPostId]);
+
+  /** Own presence from API/script: WS used to exclude self; include so UI updates without refresh. */
+  useEffect(() => {
+    if (!on || !user?._id || !setUser) return;
+    return on('PresenceUpdate', (d) => {
+      if (d?.status == null || d?.user_id == null) return;
+      if (String(d.user_id) !== String(user._id)) return;
+      setUser((prev) => (prev ? { ...prev, status: d.status } : prev));
+    });
+  }, [on, user?._id, setUser]);
 
   useEffect(() => {
     if (!on || !toast) return;
@@ -250,6 +260,17 @@ function ServerView({ servers, setServers, addServer, removeServer, onSelfRemove
       const eventServerId = d?.server_id;
       if (eventServerId != null && String(eventServerId) !== String(serverId)) return;
       if (presenceTimer) clearTimeout(presenceTimer);
+      // Apply payload immediately (Ready events omit status; connect refetch still runs separately).
+      if (d?.user_id != null && d?.status != null) {
+        setMembers((prev) =>
+          prev.map((m) => {
+            const uid = typeof m.user === 'object' && m.user ? m.user._id : m.user;
+            if (String(uid) !== String(d.user_id)) return m;
+            if (typeof m.user !== 'object' || !m.user) return m;
+            return { ...m, user: { ...m.user, status: d.status } };
+          }),
+        );
+      }
       presenceTimer = setTimeout(() => {
         presenceTimer = null;
         get(`/servers/${serverId}/members`).then((m) => setMembers(m || [])).catch(() => {});

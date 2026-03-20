@@ -376,6 +376,17 @@
   text-overflow: ellipsis;
 }
 
+.user-panel-activity {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--status-positive, #43b581);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+  line-height: 1.25;
+}
+
 .user-panel-tag {
   font-size: 11px;
   color: var(--text-muted);

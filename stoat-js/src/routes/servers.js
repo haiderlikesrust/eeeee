@@ -6,7 +6,7 @@ import {
   Permissions, DEFAULT_EVERYONE_PERMS, ALL_PERMISSIONS,
   computeServerPermissions, hasPermission, outranks, canManageRole, sameId,
 } from '../permissions.js';
-import { broadcastToServer, broadcastToUser, isUserOnline } from '../events.js';
+import { broadcastToServer, broadcastToUser, isUserOnlineDisplay } from '../events.js';
 import { toPublicUser } from '../publicUser.js';
 
 const router = Router();
@@ -119,7 +119,7 @@ router.get('/:target/members', authMiddleware(), async (req, res) => {
     members.map((m) => ({
       _id: m._id,
       server: m.server,
-      user: byId[m.user] ? toPublicUser(byId[m.user], { relationship: 'None', online: isUserOnline(m.user) }) : m.user,
+      user: byId[m.user] ? toPublicUser(byId[m.user], { relationship: 'None', online: isUserOnlineDisplay(m.user, byId[m.user]) }) : m.user,
       nickname: m.nickname,
       avatar: m.avatar,
       roles: m.roles,
@@ -133,7 +133,7 @@ router.get('/:target/members/:member', authMiddleware(), async (req, res) => {
   const m = await Member.findOne({ server: req.params.target, _id: req.params.member }).lean();
   if (!m) return res.status(404).json({ type: 'NotFound', error: 'Member not found' });
   const user = await User.findById(m.user).lean();
-  res.json({ ...m, user: user ? toPublicUser(user, { relationship: 'None', online: isUserOnline(m.user) }) : m.user });
+  res.json({ ...m, user: user ? toPublicUser(user, { relationship: 'None', online: isUserOnlineDisplay(m.user, user) }) : m.user });
 });
 
 // PATCH /servers/:server/members/:member
@@ -241,9 +241,9 @@ router.get('/:target/members_experimental_query', authMiddleware(), async (req, 
   res.json({
     members: members.map((m) => ({
       ...m,
-      user: byId[m.user] ? toPublicUser(byId[m.user], { relationship: 'None', online: isUserOnline(m.user) }) : m.user,
+      user: byId[m.user] ? toPublicUser(byId[m.user], { relationship: 'None', online: isUserOnlineDisplay(m.user, byId[m.user]) }) : m.user,
     })),
-    users: Object.values(byId).map((u) => toPublicUser(u, { relationship: 'None', online: isUserOnline(u._id) })),
+    users: Object.values(byId).map((u) => toPublicUser(u, { relationship: 'None', online: isUserOnlineDisplay(u._id, u) })),
   });
 });
 

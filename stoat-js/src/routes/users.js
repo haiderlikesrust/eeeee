@@ -1,13 +1,15 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { ulid } from 'ulid';
 import { User, Channel, Account, Member, Server, GlobalBadge } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { toPublicUser, normalizeProfileForOutput } from '../publicUser.js';
-import { broadcastToUser, broadcastToServer, isUserOnline } from '../events.js';
+import { broadcastToUser, broadcastToServer, isUserOnlineDisplay } from '../events.js';
+import { broadcastPresenceToServers } from '../presenceBroadcast.js';
+import { parseStatusPatch } from '../presenceUtils.js';
 
 const router = Router();
-const PRESENCE_VALUES = new Set(['Online', 'Idle', 'Busy', 'Invisible']);
 
 function isBotUser(user) {
   const owner = user?.bot?.owner;
@@ -43,22 +45,8 @@ function safeTrimString(value, maxLen) {
   return String(value).trim().slice(0, maxLen);
 }
 
-function parseStatusUpdate(status) {
-  if (status == null) return null;
-  if (typeof status !== 'object') {
-    return { error: 'status must be an object' };
-  }
-  const out = {};
-  if (status.text !== undefined) {
-    out.text = safeTrimString(status.text, 128);
-  }
-  if (status.presence !== undefined) {
-    if (!PRESENCE_VALUES.has(status.presence)) {
-      return { error: 'status.presence is invalid' };
-    }
-    out.presence = status.presence;
-  }
-  return { value: out };
+function newPresenceApiToken() {
+  return `stp_${crypto.randomBytes(32).toString('hex')}`;
 }
 
 function isValidHexColor(v) {
@@ -107,7 +95,7 @@ function parseProfileUpdate(profile) {
 
 // GET /users/@me
 router.get('/@me', authMiddleware(), async (req, res) => {
-  res.json(toPublicUser(req.user, { relationship: 'User', online: false }));
+  res.json(toPublicUser(req.user, { relationship: 'User', online: isUserOnlineDisplay(req.userId, req.user) }));
 });
 
 // PATCH /users/@me
@@ -120,7 +108,7 @@ router.patch('/@me', authMiddleware(), async (req, res) => {
   if (avatar != null) user.avatar = avatar;
   let statusUpdated = false;
   if (status != null) {
-    const parsedStatus = parseStatusUpdate(status);
+    const parsedStatus = parseStatusPatch(status);
     if (parsedStatus?.error) return res.status(400).json({ type: 'FailedValidation', error: parsedStatus.error });
     user.status = { ...(user.status || {}), ...(parsedStatus?.value || {}) };
     statusUpdated = true;
@@ -132,13 +120,31 @@ router.patch('/@me', authMiddleware(), async (req, res) => {
   }
   await user.save();
   if (statusUpdated) {
-    const memberships = await Member.find({ user: req.userId }).select('server').lean();
-    const payload = { type: 'PresenceUpdate', d: { user_id: req.userId, status: user.status } };
-    for (const { server } of memberships) {
-      broadcastToServer(server, payload, req.userId).catch(() => {});
-    }
+    await broadcastPresenceToServers(req.userId, user.status);
   }
-  res.json(toPublicUser(user, { relationship: 'User', online: false }));
+  res.json(toPublicUser(user, { relationship: 'User', online: isUserOnlineDisplay(req.userId, user) }));
+});
+
+// POST /users/@me/presence-token — create or rotate public presence API token (full value returned once)
+router.post('/@me/presence-token', authMiddleware(), async (req, res) => {
+  const user = await User.findById(req.userId);
+  if (!user) return res.status(404).json({ type: 'NotFound', error: 'User not found' });
+  const token = newPresenceApiToken();
+  user.presence_api_token = token;
+  await user.save();
+  res.json({
+    token,
+    warning: 'Store this token securely; it is only shown when you create or rotate it.',
+  });
+});
+
+// DELETE /users/@me/presence-token — revoke token (disables public presence API until a new token is created)
+router.delete('/@me/presence-token', authMiddleware(), async (req, res) => {
+  const user = await User.findById(req.userId);
+  if (!user) return res.status(404).json({ type: 'NotFound', error: 'User not found' });
+  user.presence_api_token = null;
+  await user.save();
+  res.json(toPublicUser(user, { relationship: 'User', online: isUserOnlineDisplay(req.userId, user) }));
 });
 
 // PATCH /users/@me/username
@@ -158,7 +164,7 @@ router.patch('/@me/username', authMiddleware(), async (req, res) => {
   if (exists) return res.status(400).json({ type: 'UsernameTaken', error: 'Username taken' });
   user.username = un;
   await user.save();
-  res.json(toPublicUser(user, { relationship: 'User', online: false }));
+  res.json(toPublicUser(user, { relationship: 'User', online: isUserOnlineDisplay(req.userId, user) }));
 });
 
 // GET /users/servers
@@ -181,7 +187,7 @@ router.get('/dms', authMiddleware(), async (req, res) => {
     let other_user = null;
     if (otherId) {
       const other = await User.findById(otherId).lean();
-      if (other) other_user = toPublicUser(other, { relationship: 'None', online: isUserOnline(otherId) });
+      if (other) other_user = toPublicUser(other, { relationship: 'None', online: isUserOnlineDisplay(otherId, other) });
     }
     out.push({ ...ch, other_user });
   }
@@ -221,16 +227,18 @@ router.post('/friend', authMiddleware(), async (req, res) => {
   if (rel === 'Incoming') {
     await setRelationship(req.userId, targetId, 'Friend', 'Friend');
     const updated = await User.findById(targetId).lean();
-    return res.json(toPublicUser(updated, { relationship: 'Friend', online: false }));
+    return res.json(toPublicUser(updated, { relationship: 'Friend', online: isUserOnlineDisplay(updated._id, updated) }));
   }
   await setRelationship(req.userId, targetId, 'Outgoing', 'Incoming');
   const updated = await User.findById(targetId).lean();
-  const fromUser = await User.findById(req.userId).select('_id username discriminator display_name avatar badges system_badges status profile bot').lean();
+  const fromUser = await User.findById(req.userId)
+    .select('_id username discriminator display_name avatar badges system_badges status profile bot presence_api_expires_at')
+    .lean();
   broadcastToUser(targetId, {
     type: 'FriendRequest',
-    d: { from_user: toPublicUser(fromUser, { relationship: 'Outgoing', online: false }) },
+    d: { from_user: toPublicUser(fromUser, { relationship: 'Outgoing', online: isUserOnlineDisplay(req.userId, fromUser) }) },
   });
-  res.json(toPublicUser(updated, { relationship: 'Incoming', online: false }));
+  res.json(toPublicUser(updated, { relationship: 'Incoming', online: isUserOnlineDisplay(updated._id, updated) }));
 });
 
 // GET /users/:target
@@ -238,7 +246,7 @@ router.get('/:target', authMiddleware(true), async (req, res) => {
   const user = await User.findById(req.params.target).lean();
   if (!user) return res.status(404).json({ type: 'NotFound', error: 'User not found' });
   const rel = req.user ? relationshipWith(req.user.relations, req.params.target) : 'None';
-  res.json(toPublicUser(user, { relationship: rel, online: false }));
+  res.json(toPublicUser(user, { relationship: rel, online: isUserOnlineDisplay(user._id, user) }));
 });
 
 // GET /users/:target/dm
@@ -313,7 +321,7 @@ router.patch('/:target/system-badges', authMiddleware(), async (req, res) => {
   await target.save();
 
   const relationship = relationshipWith(req.user?.relations, req.params.target);
-  res.json(toPublicUser(target, { relationship, online: false }));
+  res.json(toPublicUser(target, { relationship, online: isUserOnlineDisplay(target._id, target) }));
 });
 
 // GET /users/:target/flags
@@ -368,7 +376,7 @@ router.put('/:target/friend', authMiddleware(), async (req, res) => {
   }
   await setRelationship(req.userId, targetId, 'Friend', 'Friend');
   const updated = await User.findById(targetId).lean();
-  res.json(toPublicUser(updated, { relationship: 'Friend', online: false }));
+  res.json(toPublicUser(updated, { relationship: 'Friend', online: isUserOnlineDisplay(updated._id, updated) }));
 });
 
 // DELETE /users/:target/friend
@@ -426,10 +434,12 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   if (!user) return res.status(404).json({ type: 'NotFound', error: 'User not found' });
   if (display_name != null) user.display_name = safeTrimString(display_name, 48);
   if (avatar != null) user.avatar = avatar;
+  let statusUpdated = false;
   if (status != null) {
-    const parsedStatus = parseStatusUpdate(status);
+    const parsedStatus = parseStatusPatch(status);
     if (parsedStatus?.error) return res.status(400).json({ type: 'FailedValidation', error: parsedStatus.error });
     user.status = { ...(user.status || {}), ...(parsedStatus?.value || {}) };
+    statusUpdated = true;
   }
   if (profile != null) {
     const parsedProfile = parseProfileUpdate(profile);
@@ -437,7 +447,10 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
     user.profile = { ...(user.profile || {}), ...(parsedProfile?.value || {}) };
   }
   await user.save();
-  res.json(toPublicUser(user, { relationship: 'User', online: false }));
+  if (statusUpdated) {
+    await broadcastPresenceToServers(req.userId, user.status);
+  }
+  res.json(toPublicUser(user, { relationship: 'User', online: isUserOnlineDisplay(req.userId, user) }));
 });
 
 export default router;

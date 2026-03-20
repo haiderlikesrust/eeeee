@@ -4,10 +4,12 @@ import config from '../config.js';
 import { connectDb } from './db/index.js';
 import app from './app.js';
 import { createEventServer } from './events.js';
+import { startPresenceApiExpiry } from './presenceApiExpiry.js';
 import logger from './logger.js';
 
 async function main() {
   await connectDb();
+  startPresenceApiExpiry();
 
   // Remove old unique index on username alone (we use username+discriminator now)
   await mongoose.connection.db.collection('users').dropIndex('username_1').catch(() => {});

@@ -2,7 +2,12 @@
  * Configuration - no Docker, no Redis by default.
  * Uses MongoDB only. Rate limiting is in-memory.
  */
+import dotenv from 'dotenv';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __configDir = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__configDir, '.env') });
 
 const corsRaw = process.env.CORS_ORIGINS;
 const corsOrigins = corsRaw

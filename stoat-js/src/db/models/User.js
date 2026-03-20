@@ -5,9 +5,28 @@ const relationshipSchema = new mongoose.Schema({
   status: { type: String, enum: ['None', 'User', 'Friend', 'Outgoing', 'Incoming', 'Blocked', 'BlockedOther'] },
 }, { _id: false });
 
+const userActivitySchema = new mongoose.Schema({
+  type: {
+    type: String,
+    enum: ['Playing', 'Listening', 'Watching', 'Streaming', 'Competing'],
+    required: true,
+  },
+  name: { type: String, maxlength: 128 },
+  details: { type: String, maxlength: 128, default: null },
+  state: { type: String, maxlength: 128, default: null },
+  /** When this activity session started (elapsed timer in clients). */
+  started_at: { type: Date, default: null },
+  /** HTTPS URL string or attachment-shaped object from /attachments upload. */
+  image: { type: mongoose.Schema.Types.Mixed, default: null },
+  /** `api` = PATCH /public/v1/presence; legacy values kept for old documents. */
+  source: { type: String, enum: ['manual', 'spotify', 'api'], default: 'manual' },
+}, { _id: false });
+
 const userStatusSchema = new mongoose.Schema({
   text: String,
   presence: { type: String, enum: ['Online', 'Idle', 'Busy', 'Invisible'], default: 'Invisible' },
+  /** Rich presence (Discord-style): Playing X, Listening to Y, etc. */
+  activity: { type: userActivitySchema, default: null },
 }, { _id: false });
 
 const userProfileSchema = new mongoose.Schema({
@@ -58,8 +77,14 @@ const userSchema = new mongoose.Schema({
   privileged: { type: Boolean, default: false },
   bot: { type: botSchema, default: null },
   last_acknowledged_policy_change: { type: Date, default: () => new Date(0) },
+  /** Secret for PATCH /public/v1/presence (Bearer or X-Presence-Token). */
+  presence_api_token: { type: String, default: null },
+  /** When API activity should auto-clear if not refreshed (script stopped). */
+  presence_api_expires_at: { type: Date, default: null },
 }, { id: false, timestamps: false });
 
 userSchema.index({ username: 1, discriminator: 1 }, { unique: true });
+userSchema.index({ presence_api_token: 1 }, { unique: true, sparse: true });
+userSchema.index({ presence_api_expires_at: 1 }, { sparse: true });
 
 export default mongoose.model('User', userSchema);

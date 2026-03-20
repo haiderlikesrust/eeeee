@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { get, patch, del, uploadFile } from '../api';
+import { get, post, patch, del, uploadFile } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
@@ -45,6 +45,8 @@ export default function UserSettings({ onClose }) {
   const [displayName, setDisplayName] = useState(user?.display_name || '');
   const [statusText, setStatusText] = useState(user?.status?.text || '');
   const [presence, setPresence] = useState(user?.status?.presence || 'Online');
+  /** Last generated presence API token (shown once per create/rotate). */
+  const [presenceTokenReveal, setPresenceTokenReveal] = useState('');
   const [bio, setBio] = useState(user?.profile?.bio || user?.profile?.content || '');
   const [pronouns, setPronouns] = useState(user?.profile?.pronouns || '');
   const [accentColor, setAccentColor] = useState(user?.profile?.accent_color || '#5865f2');
@@ -129,8 +131,14 @@ export default function UserSettings({ onClose }) {
     try {
       const body = {};
       if (displayName !== (user?.display_name || '')) body.display_name = displayName || null;
-      if (statusText !== (user?.status?.text || '') || presence !== (user?.status?.presence || 'Online')) {
-        body.status = { ...(user?.status || {}), text: statusText || null, presence: presence || 'Online' };
+      const statusChanged =
+        statusText !== (user?.status?.text || '')
+        || presence !== (user?.status?.presence || 'Online');
+      if (statusChanged) {
+        body.status = {
+          text: statusText || null,
+          presence: presence || 'Online',
+        };
       }
       body.profile = {
         bio: bio || null,
@@ -258,7 +266,12 @@ export default function UserSettings({ onClose }) {
                   user={{
                     ...user,
                     display_name: displayName || user?.display_name,
-                    status: { ...(user?.status || {}), text: statusText || null },
+                    status: {
+                      ...(user?.status || {}),
+                      text: statusText || null,
+                      presence,
+                      activity: user?.status?.activity ?? null,
+                    },
                     profile: {
                       ...(user?.profile || {}),
                       bio: bio || null,
@@ -287,8 +300,109 @@ export default function UserSettings({ onClose }) {
                   onChange={setPresence}
                   options={[{ value: 'Online', label: 'Online' }, { value: 'Idle', label: 'Idle' }, { value: 'Busy', label: 'Busy' }, { value: 'Invisible', label: 'Invisible' }]}
                 />
-                <input value={statusText} onChange={(e) => setStatusText(e.target.value)} placeholder="What are you up to?" />
+                <input value={statusText} onChange={(e) => setStatusText(e.target.value)} placeholder="Custom status (emoji supported)" />
               </label>
+              <div className="settings-subhead">Rich presence API</div>
+              <p className="settings-hint">
+                Playing / listening / streaming activity is set only via HTTP (scripts, desktop apps, etc.). Custom status and presence above still apply.
+              </p>
+              <p className="settings-hint">
+                {user?.presence_api_token_configured ? 'A secret token is active on your account.' : 'No token yet — create one to enable the API.'}
+              </p>
+              {presenceTokenReveal ? (
+                <label className="auth-label">
+                  <span>NEW TOKEN (COPY NOW)</span>
+                  <input readOnly value={presenceTokenReveal} onFocus={(e) => e.target.select()} />
+                </label>
+              ) : null}
+              <div className="settings-presence-api-actions">
+                <button
+                  type="button"
+                  className="modal-btn secondary"
+                  onClick={async () => {
+                    try {
+                      const data = await post('/users/@me/presence-token');
+                      if (data?.token) {
+                        setPresenceTokenReveal(data.token);
+                        setUser((prev) => ({ ...prev, presence_api_token_configured: true }));
+                        toast.success('Token issued — copy it now');
+                      }
+                    } catch (err) {
+                      toast.error(getErrMsg(err, 'Failed to create token'));
+                    }
+                  }}
+                >
+                  Create / rotate token
+                </button>
+                <button
+                  type="button"
+                  className="modal-btn secondary"
+                  disabled={!user?.presence_api_token_configured}
+                  onClick={async () => {
+                    try {
+                      const u = await del('/users/@me/presence-token');
+                      setPresenceTokenReveal('');
+                      if (u) setUser((prev) => ({ ...prev, ...u }));
+                      toast.success('Token revoked');
+                    } catch (err) {
+                      toast.error(getErrMsg(err, 'Failed to revoke'));
+                    }
+                  }}
+                >
+                  Revoke token
+                </button>
+              </div>
+              <p className="settings-hint">
+                Activity uses a time lease (default <code className="settings-inline-code">ttl_seconds: 120</code>). While your script keeps sending updates or{' '}
+                <code className="settings-inline-code">heartbeat: true</code> before the lease ends, presence stays; when the script stops, it clears automatically.
+              </p>
+              <p className="settings-hint">
+                Elapsed time (e.g. “for 12m”) is computed from <code className="settings-inline-code">started_at</code> (set when the session starts; changing name/details/state starts a new session). Optional <code className="settings-inline-code">activity.image</code>: an <code className="settings-inline-code">https://</code> URL or an attachment object from <code className="settings-inline-code">POST /attachments</code> (same shape as avatar uploads).
+              </p>
+              <p className="settings-hint">
+                While the lease is active, you count as online in member lists even if no browser tab is connected.
+              </p>
+              <pre className="settings-code-block">
+{`// Node: show while running, hide when process exits (no heartbeat)
+const TOKEN = process.env.STOAT_PRESENCE_TOKEN;
+const base = process.env.STOAT_API || 'http://localhost:14702';
+const headers = { Authorization: \`Bearer \${TOKEN}\`, 'Content-Type': 'application/json' };
+await fetch(\`\${base}/public/v1/presence\`, {
+  method: 'PATCH',
+  headers,
+  body: JSON.stringify({
+    activity: { type: 'Playing', name: 'My App' },
+    ttl_seconds: 60,
+    presence: 'Online',
+  }),
+});
+const t = setInterval(() => {
+  fetch(\`\${base}/public/v1/presence\`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ heartbeat: true, ttl_seconds: 60 }),
+  });
+}, 30_000);
+process.on('SIGINT', async () => {
+  clearInterval(t);
+  await fetch(\`\${base}/public/v1/presence\`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ activity: null }),
+  });
+  process.exit(0);
+});`}
+              </pre>
+              <pre className="settings-code-block">
+{`curl -X PATCH "${typeof window !== 'undefined' ? window.location.origin : ''}/api/public/v1/presence" \\
+  -H "Authorization: Bearer YOUR_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"activity":{"type":"Playing","name":"My Game"},"ttl_seconds":120}'`}
+              </pre>
+              <p className="settings-hint">
+                Clear immediately: <code className="settings-inline-code">{`{"activity":null}`}</code>. Optional{' '}
+                <code className="settings-inline-code">presence</code> (Online, Idle, Busy, Invisible).
+              </p>
               <label className="auth-label">
                 <span>ABOUT ME</span>
                 <textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={3} className="settings-textarea" placeholder="Tell people about yourself" />

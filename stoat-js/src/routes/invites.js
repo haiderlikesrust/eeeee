@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { ulid } from 'ulid';
 import { Invite, Channel, Server, Member, User } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
-import { broadcastToServer, isUserOnline } from '../events.js';
+import { broadcastToServer, isUserOnlineDisplay } from '../events.js';
 import { toPublicUser } from '../publicUser.js';
 
 const router = Router();
@@ -55,7 +55,7 @@ router.post('/:code', authMiddleware(), async (req, res) => {
       type: 'ServerMemberJoin',
       data: {
         serverId: invite.server,
-        member: { ...newMember.toObject(), user: toPublicUser(joinedUser, { relationship: 'None', online: isUserOnline(req.userId) }) },
+        member: { ...newMember.toObject(), user: toPublicUser(joinedUser, { relationship: 'None', online: isUserOnlineDisplay(req.userId, joinedUser) }) },
       },
     });
   }

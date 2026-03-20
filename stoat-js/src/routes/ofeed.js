@@ -3,13 +3,13 @@ import { ulid } from 'ulid';
 import { OfeedPost, User } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { toPublicUser } from '../publicUser.js';
-import { isUserOnline } from '../events.js';
+import { isUserOnlineDisplay } from '../events.js';
 
 const router = Router();
 const MAX_LEN = 280;
 
 function serializeAuthor(u) {
-  return u ? toPublicUser(u, { online: isUserOnline(u._id) }) : null;
+  return u ? toPublicUser(u, { online: isUserOnlineDisplay(u._id, u) }) : null;
 }
 
 function serializePostDoc(doc, authorMap, viewerId, embedMap) {

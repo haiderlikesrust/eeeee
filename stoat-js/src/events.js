@@ -17,6 +17,24 @@ export function isUserOnline(userId) {
   return false;
 }
 
+/** True while presence API lease is active (script heartbeating) even if browser tab is closed. */
+export function isPresenceApiLeaseActive(userDoc) {
+  if (!userDoc || typeof userDoc !== 'object') return false;
+  const exp = userDoc.presence_api_expires_at;
+  if (!exp) return false;
+  const t = exp instanceof Date ? exp.getTime() : new Date(exp).getTime();
+  if (!Number.isFinite(t) || t <= Date.now()) return false;
+  const act = userDoc.status?.activity;
+  return Boolean(act && typeof act === 'object' && act.source === 'api');
+}
+
+/** Member lists / DMs: show online if WS connected or presence script is active. */
+export function isUserOnlineDisplay(userId, userDoc) {
+  if (isUserOnline(userId)) return true;
+  if (userDoc && isPresenceApiLeaseActive(userDoc)) return true;
+  return false;
+}
+
 export const GatewayIntents = {
   GUILDS: 1 << 0,
   GUILD_MEMBERS: 1 << 1,

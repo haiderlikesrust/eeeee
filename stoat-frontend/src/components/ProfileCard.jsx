@@ -6,6 +6,9 @@ import { useAuth } from '../context/AuthContext';
 import { useMobile } from '../context/MobileContext';
 import { get } from '../api';
 import { loadSystemBadgeMap } from '../utils/systemBadges';
+import { activityTypeLabel, formatActivitySecondary, resolveActivityImageUrl } from '../utils/activityDisplay';
+import ActivityElapsed from './ActivityElapsed';
+import ActivityMiniIcon from './ActivityMiniIcon';
 import './ProfileCard.css';
 
 const PROFILE_CARD_PORTAL_Z = 1100;
@@ -85,6 +88,9 @@ export default function ProfileCard({
     } catch {}
   };
 
+  const statusActivity = user?.status?.activity?.name && user?.status?.activity?.type ? user.status.activity : null;
+  const activityArtUrl = statusActivity ? resolveActivityImageUrl(statusActivity.image) : null;
+
   const cardContent = (
     <>
       {(showBackdrop || isMobilePopup) && (
@@ -117,7 +123,42 @@ export default function ProfileCard({
           </div>
           <div className="profile-card-tag">{getTag(user)}</div>
 
-          {user?.status?.text && <div className="profile-card-status">{user.status.text}</div>}
+          {(statusActivity || user?.status?.text) && (
+            <div className={`profile-card-presence-wrap${statusActivity && user?.status?.text ? ' profile-card-presence-both' : ''}`}>
+              {statusActivity && (
+                <div className="profile-card-activity">
+                  <div className="profile-card-activity-row">
+                    {activityArtUrl ? (
+                      <img src={activityArtUrl} alt="" className="profile-card-activity-art" />
+                    ) : (
+                      <div className="profile-card-activity-art-fallback" aria-hidden="true">
+                        <ActivityMiniIcon type={statusActivity.type} size={28} />
+                      </div>
+                    )}
+                    <div className="profile-card-activity-text">
+                      <div className="profile-card-activity-type">{activityTypeLabel(statusActivity.type)}</div>
+                      <div className="profile-card-activity-name">{statusActivity.name}</div>
+                      {formatActivitySecondary(statusActivity) && (
+                        <div className="profile-card-activity-meta">{formatActivitySecondary(statusActivity)}</div>
+                      )}
+                      {statusActivity.started_at && (
+                        <div className="profile-card-activity-elapsed">
+                          <ActivityElapsed startedAt={statusActivity.started_at} tickMs={1000} />
+                          <span className="profile-card-activity-elapsed-suffix">elapsed</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {user?.status?.text && (
+                <div className="profile-card-custom-status">
+                  <span className="profile-card-custom-status-dot" aria-hidden="true">◆</span>
+                  {user.status.text}
+                </div>
+              )}
+            </div>
+          )}
           {bio && <div className="profile-card-bio">{bio}</div>}
 
           {systemBadges.length > 0 && (

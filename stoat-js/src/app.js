@@ -23,6 +23,7 @@ import uploads from './routes/uploads.js';
 import admin from './routes/admin.js';
 import botPublic from './routes/botPublic.js';
 import ofeed from './routes/ofeed.js';
+import publicPresence from './routes/publicPresence.js';
 
 const app = express();
 
@@ -69,6 +70,7 @@ app.use((req, res, next) => {
 });
 
 app.use('/', root);
+app.use('/public/v1', ratelimit({ max: 90 }), publicPresence);
 app.use('/auth', ratelimit({ max: 15 }), auth);
 app.use('/auth/mfa', mfa);
 app.use('/users', users);
@@ -90,6 +92,7 @@ app.use('/ofeed', ratelimit({ max: 60 }), ofeed);
 
 // Optional 0.8 prefix (Stoat API version)
 app.use('/0.8', root);
+app.use('/0.8/public/v1', ratelimit({ max: 90 }), publicPresence);
 app.use('/0.8/auth', ratelimit({ max: 15 }), auth);
 app.use('/0.8/auth/mfa', mfa);
 app.use('/0.8/users', users);
