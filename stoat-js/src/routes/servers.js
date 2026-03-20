@@ -4,7 +4,7 @@ import { Server, Channel, Member, User, Invite, ServerBan, Emoji, AuditLog, Mess
 import { authMiddleware } from '../middleware/auth.js';
 import {
   Permissions, DEFAULT_EVERYONE_PERMS, ALL_PERMISSIONS,
-  computeServerPermissions, hasPermission, outranks, canManageRole,
+  computeServerPermissions, hasPermission, outranks, canManageRole, sameId,
 } from '../permissions.js';
 import { broadcastToServer, broadcastToUser, isUserOnline } from '../events.js';
 import { toPublicUser } from '../publicUser.js';
@@ -77,10 +77,10 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   if (description != null) ctx.server.description = description;
   if (icon != null) ctx.server.icon = icon;
   if (banner != null) ctx.server.banner = banner;
-  if (default_permissions != null && ctx.server.owner === req.userId) {
+  if (default_permissions != null && sameId(ctx.server.owner, req.userId)) {
     ctx.server.default_permissions = default_permissions;
   }
-  if (locked != null && ctx.server.owner === req.userId) {
+  if (locked != null && sameId(ctx.server.owner, req.userId)) {
     ctx.server.locked = !!locked;
   }
   if (word_filter !== undefined) {
@@ -94,7 +94,7 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
 router.delete('/:target', authMiddleware(), async (req, res) => {
   const server = await Server.findById(req.params.target);
   if (!server) return res.status(404).json({ type: 'NotFound', error: 'Server not found' });
-  if (server.owner !== req.userId) return res.status(403).json({ type: 'Forbidden', error: 'Only owner can delete' });
+  if (!sameId(server.owner, req.userId)) return res.status(403).json({ type: 'Forbidden', error: 'Only owner can delete' });
   await Channel.deleteMany({ server: server._id });
   await Member.deleteMany({ server: server._id });
   await ServerBan.deleteMany({ server: server._id });
@@ -143,8 +143,8 @@ router.patch('/:target/members/:member', authMiddleware(), async (req, res) => {
   const targetMember = await Member.findOne({ server: ctx.server._id, _id: req.params.member });
   if (!targetMember) return res.status(404).json({ type: 'NotFound', error: 'Member not found' });
 
-  const isSelf = targetMember.user === req.userId;
-  const isOwner = ctx.server.owner === req.userId;
+  const isSelf = sameId(targetMember.user, req.userId);
+  const isOwner = sameId(ctx.server.owner, req.userId);
   const { nickname, roles } = req.body || {};
 
   // Nickname: self can always change own, MANAGE_NICKNAMES for others
@@ -198,26 +198,37 @@ router.delete('/:target/members/:member', authMiddleware(), async (req, res) => 
   const targetMember = await Member.findOne({ _id: req.params.member, server: ctx.server._id });
   if (!targetMember) return res.status(404).json({ type: 'NotFound', error: 'Member not found' });
 
-  const isSelf = targetMember.user === req.userId;
-  if (targetMember.user === ctx.server.owner) {
+  const isSelf = sameId(targetMember.user, req.userId);
+  if (sameId(targetMember.user, ctx.server.owner)) {
     return res.status(400).json({ type: 'InvalidOperation', error: 'Cannot remove owner' });
   }
 
+  const actorIsOwner = sameId(ctx.server.owner, req.userId);
   if (!isSelf) {
-    if (!hasPermission(ctx.perms, Permissions.KICK_MEMBERS)) {
-      return res.status(403).json({ type: 'Forbidden', error: 'Missing KICK_MEMBERS permission' });
+    if (!actorIsOwner && !hasPermission(ctx.perms, Permissions.KICK_MEMBERS)) {
+      return res.status(403).json({
+        type: 'Forbidden',
+        error: 'You need the Kick Members permission (or Administrator) to remove other members.',
+        code: 'MISSING_KICK_MEMBERS',
+      });
     }
-    if (!outranks(ctx.server, ctx.member, targetMember)) {
-      return res.status(403).json({ type: 'Forbidden', error: 'Cannot kick higher-ranked member' });
+    if (!actorIsOwner && !outranks(ctx.server, ctx.member, targetMember)) {
+      return res.status(403).json({
+        type: 'Forbidden',
+        error: 'You cannot kick a member whose highest role is above or equal to yours.',
+        code: 'ROLE_HIERARCHY',
+      });
     }
   }
 
   const removedUserId = targetMember.user;
   await targetMember.deleteOne();
-  broadcastToServer(ctx.server._id, {
+  const leavePayload = {
     type: 'ServerMemberLeave',
     data: { serverId: ctx.server._id, userId: removedUserId },
-  });
+  };
+  broadcastToServer(ctx.server._id, leavePayload);
+  broadcastToUser(removedUserId, leavePayload);
   res.status(204).send();
 });
 
@@ -375,8 +386,12 @@ router.put('/:target/permissions/:role_id', authMiddleware(), async (req, res) =
 router.get('/:target/bans', authMiddleware(), async (req, res) => {
   const ctx = await getServerAndMember(req, res);
   if (!ctx) return;
-  if (!hasPermission(ctx.perms, Permissions.BAN_MEMBERS)) {
-    return res.status(403).json({ type: 'Forbidden', error: 'Missing BAN_MEMBERS permission' });
+  if (!sameId(ctx.server.owner, req.userId) && !hasPermission(ctx.perms, Permissions.BAN_MEMBERS)) {
+    return res.status(403).json({
+      type: 'Forbidden',
+      error: 'You need the Ban Members permission (or Administrator) to view bans.',
+      code: 'MISSING_BAN_MEMBERS',
+    });
   }
   const bans = await ServerBan.find({ server: ctx.server._id }).populate('user', '_id username discriminator').lean();
   res.json({ bans: bans.map((b) => ({ ...b, user: b.user })) });
@@ -386,26 +401,37 @@ router.get('/:target/bans', authMiddleware(), async (req, res) => {
 router.put('/:target/bans/:user', authMiddleware(), async (req, res) => {
   const ctx = await getServerAndMember(req, res);
   if (!ctx) return;
-  if (!hasPermission(ctx.perms, Permissions.BAN_MEMBERS)) {
-    return res.status(403).json({ type: 'Forbidden', error: 'Missing BAN_MEMBERS permission' });
+  const actorIsOwner = sameId(ctx.server.owner, req.userId);
+  if (!actorIsOwner && !hasPermission(ctx.perms, Permissions.BAN_MEMBERS)) {
+    return res.status(403).json({
+      type: 'Forbidden',
+      error: 'You need the Ban Members permission (or Administrator) to ban members.',
+      code: 'MISSING_BAN_MEMBERS',
+    });
   }
   const targetMember = await Member.findOne({ server: ctx.server._id, user: req.params.user });
   if (targetMember) {
-    if (targetMember.user === ctx.server.owner) {
+    if (sameId(targetMember.user, ctx.server.owner)) {
       return res.status(400).json({ type: 'InvalidOperation', error: 'Cannot ban owner' });
     }
-    if (!outranks(ctx.server, ctx.member, targetMember) && ctx.server.owner !== req.userId) {
-      return res.status(403).json({ type: 'Forbidden', error: 'Cannot ban higher-ranked member' });
+    if (!actorIsOwner && !outranks(ctx.server, ctx.member, targetMember)) {
+      return res.status(403).json({
+        type: 'Forbidden',
+        error: 'You cannot ban a member whose highest role is above or equal to yours.',
+        code: 'ROLE_HIERARCHY',
+      });
     }
   }
   const { reason } = req.body || {};
   const banId = ulid();
   await ServerBan.create({ _id: banId, server: ctx.server._id, user: req.params.user, reason: reason || undefined });
   await Member.deleteOne({ server: ctx.server._id, user: req.params.user });
-  broadcastToServer(ctx.server._id, {
+  const leavePayload = {
     type: 'ServerMemberLeave',
     data: { serverId: ctx.server._id, userId: req.params.user },
-  });
+  };
+  broadcastToServer(ctx.server._id, leavePayload);
+  broadcastToUser(req.params.user, leavePayload);
   const ban = await ServerBan.findById(banId).populate('user').lean();
   res.json(ban);
 });
@@ -414,8 +440,13 @@ router.put('/:target/bans/:user', authMiddleware(), async (req, res) => {
 router.delete('/:target/bans/:user', authMiddleware(), async (req, res) => {
   const ctx = await getServerAndMember(req, res);
   if (!ctx) return;
-  if (!hasPermission(ctx.perms, Permissions.BAN_MEMBERS)) {
-    return res.status(403).json({ type: 'Forbidden', error: 'Missing BAN_MEMBERS permission' });
+  const actorIsOwner = sameId(ctx.server.owner, req.userId);
+  if (!actorIsOwner && !hasPermission(ctx.perms, Permissions.BAN_MEMBERS)) {
+    return res.status(403).json({
+      type: 'Forbidden',
+      error: 'You need the Ban Members permission (or Administrator) to unban members.',
+      code: 'MISSING_BAN_MEMBERS',
+    });
   }
   await ServerBan.deleteOne({ server: ctx.server._id, user: req.params.user });
   res.status(204).send();

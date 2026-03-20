@@ -56,10 +56,16 @@ export async function api(method, path, body) {
 }
 
 export async function get(path) {
-  const cached = getCache.get(path);
-  if (cached && Date.now() < cached.expires) return cached.data;
+  // Message lists change constantly; caching caused stale polls to wipe optimistic / new sends.
+  const skipCache = path.includes('/messages') || path.includes('/ofeed');
+  if (!skipCache) {
+    const cached = getCache.get(path);
+    if (cached && Date.now() < cached.expires) return cached.data;
+  }
   const data = await api('GET', path);
-  getCache.set(path, { data, expires: Date.now() + GET_CACHE_TTL_MS });
+  if (!skipCache) {
+    getCache.set(path, { data, expires: Date.now() + GET_CACHE_TTL_MS });
+  }
   return data;
 }
 export const post = (path, body) => api('POST', path, body);

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useWS } from '../context/WebSocketContext';
@@ -6,11 +6,13 @@ import { useVoice } from '../context/VoiceContext';
 import { useUnread } from '../context/UnreadContext';
 import { useToast } from '../context/ToastContext';
 import { MobileProvider, useMobile } from '../context/MobileContext';
+import { useOfeed } from '../context/OfeedContext';
 import { get, post } from '../api';
 import ServerBar from '../components/ServerBar';
 import ChannelSidebar from '../components/ChannelSidebar';
 import ChatArea from '../components/ChatArea';
 import MemberSidebar from '../components/MemberSidebar';
+import OfeedPanel from '../components/OfeedPanel';
 import FriendsPage from '../components/FriendsPage';
 import VoiceChannelView from '../components/VoiceChannelView';
 import './AppLayout.css';
@@ -27,11 +29,28 @@ function AppLayoutInner() {
   const { user, fetchUser } = useAuth();
   const { on } = useWS();
   const location = useLocation();
+  const navigate = useNavigate();
   const { fetchUnreads } = useUnread();
   const toast = useToast();
   const { isMobile, mobileOverlay, closeMobileOverlay } = useMobile();
+  const { setOpen: setOfeedOpen, setDeepLinkPostId } = useOfeed() || {};
   const [servers, setServers] = useState([]);
   const [dms, setDms] = useState([]);
+
+  /** Global Ofeed share links use /channels/@me#ofeed_post=… — redirect here if opened from a server/channel URL. */
+  useEffect(() => {
+    const hash = location.hash || (typeof window !== 'undefined' ? window.location.hash : '');
+    const m = hash.match(/^#?ofeed_post=([^&]+)/);
+    if (!m?.[1]) return;
+    const postId = m[1];
+    if (!location.pathname.startsWith('/channels/@me')) {
+      navigate(`/channels/@me#ofeed_post=${postId}`, { replace: true });
+      return;
+    }
+    setOfeedOpen?.(true);
+    setDeepLinkPostId?.(postId);
+    window.history.replaceState(null, '', location.pathname + location.search);
+  }, [location.pathname, location.hash, navigate, setOfeedOpen, setDeepLinkPostId]);
 
   useEffect(() => {
     if (!on || !toast) return;
@@ -98,6 +117,33 @@ function AppLayoutInner() {
     setServers((prev) => prev.filter((s) => s._id !== serverId));
   }, []);
 
+  const lastRemovalToastRef = useRef({ id: null, t: 0 });
+  /** Remove server from sidebar, navigate away if viewing it, toast once (WS + HTTP 403 may both fire). */
+  const onSelfRemovedFromServer = useCallback((serverId) => {
+    if (!serverId) return;
+    setServers((prev) => prev.filter((s) => String(s._id) !== String(serverId)));
+    const path = location.pathname;
+    if (path.startsWith(`/channels/${serverId}/`) || path === `/channels/${serverId}`) {
+      navigate('/channels/@me', { replace: true });
+    }
+    const now = Date.now();
+    if (lastRemovalToastRef.current.id !== serverId || now - lastRemovalToastRef.current.t > 4000) {
+      lastRemovalToastRef.current = { id: serverId, t: now };
+      toast.info('You were removed from this server.');
+    }
+  }, [navigate, toast]);
+
+  /** Kicked/banned users are excluded from broadcastToServer — API also notifies them directly. */
+  useEffect(() => {
+    if (!on || !user?._id) return;
+    return on('ServerMemberLeave', (data) => {
+      const sid = data?.serverId;
+      const uid = data?.userId;
+      if (!sid || uid == null || String(uid) !== String(user._id)) return;
+      onSelfRemovedFromServer(sid);
+    });
+  }, [on, user?._id, onSelfRemovedFromServer]);
+
   return (
     <div
       className={`app-layout${isMobile ? ' mobile' : ''}`}
@@ -121,10 +167,15 @@ function AppLayoutInner() {
           element={
             <>
               <ChannelSidebar type="home" dms={dms} />
-              <Routes>
-                <Route index element={<FriendsPage />} />
-                <Route path=":channelId" element={<ChatView />} />
-              </Routes>
+              <div className="chat-container">
+                <div className="chat-main">
+                  <Routes>
+                    <Route index element={<FriendsPage />} />
+                    <Route path=":channelId" element={<MeChannelChat />} />
+                  </Routes>
+                </div>
+                <OfeedPanel />
+              </div>
             </>
           }
         />
@@ -136,6 +187,7 @@ function AppLayoutInner() {
               setServers={setServers}
               addServer={addServer}
               removeServer={removeServer}
+              onSelfRemovedFromServer={onSelfRemovedFromServer}
             />
           }
         />
@@ -153,18 +205,16 @@ function AppLayoutInner() {
   );
 }
 
-function ChatView() {
+function MeChannelChat() {
   const { channelId } = useParams();
-  return (
-    <div className="chat-container">
-      <ChatArea channelId={channelId} />
-    </div>
-  );
+  return <ChatArea channelId={channelId} />;
 }
 
-function ServerView({ servers, setServers, addServer, removeServer }) {
+function ServerView({ servers, setServers, addServer, removeServer, onSelfRemovedFromServer }) {
   const { serverId } = useParams();
-  const navigate = useNavigate();
+  const handleChannelAccessLost = useCallback(() => {
+    if (serverId) onSelfRemovedFromServer(serverId);
+  }, [serverId, onSelfRemovedFromServer]);
   const { on, connected } = useWS();
   const [server, setServer] = useState(null);
   const [channels, setChannels] = useState([]);
@@ -214,12 +264,11 @@ function ServerView({ servers, setServers, addServer, removeServer }) {
       }
     });
     const unsub2 = on('ServerMemberLeave', (data) => {
-      if (data.serverId === serverId && data.userId) {
-        setMembers((prev) => prev.filter((m) => {
-          const uid = typeof m.user === 'object' ? m.user._id : m.user;
-          return uid !== data.userId;
-        }));
-      }
+      if (String(data.serverId) !== String(serverId) || !data.userId) return;
+      setMembers((prev) => prev.filter((m) => {
+        const uid = typeof m.user === 'object' ? m.user._id : m.user;
+        return String(uid) !== String(data.userId);
+      }));
     });
     return () => {
       if (presenceTimer) clearTimeout(presenceTimer);
@@ -263,7 +312,14 @@ function ServerView({ servers, setServers, addServer, removeServer }) {
       <Routes>
         <Route
           path=":channelId"
-          element={<ServerChatView members={members} serverRoles={server?.roles || {}} channels={channels} />}
+          element={(
+            <ServerChatView
+              members={members}
+              serverRoles={server?.roles || {}}
+              channels={channels}
+              onChannelAccessLost={handleChannelAccessLost}
+            />
+          )}
         />
         <Route
           index
@@ -282,7 +338,7 @@ function ServerView({ servers, setServers, addServer, removeServer }) {
   );
 }
 
-function ServerChatView({ members, serverRoles, channels }) {
+function ServerChatView({ members, serverRoles, channels, onChannelAccessLost }) {
   const { channelId } = useParams();
   const channel = (channels || []).find((c) => c._id === channelId);
   const isVoice = channel?.channel_type === 'VoiceChannel';
@@ -292,14 +348,16 @@ function ServerChatView({ members, serverRoles, channels }) {
       <div className="chat-container">
         <VoiceChannelView channel={channel} />
         <MemberSidebar members={members} serverRoles={serverRoles} />
+        <OfeedPanel />
       </div>
     );
   }
 
   return (
     <div className="chat-container">
-      <ChatArea channelId={channelId} serverRoles={serverRoles} />
+      <ChatArea channelId={channelId} serverRoles={serverRoles} onChannelAccessLost={onChannelAccessLost} />
       <MemberSidebar members={members} serverRoles={serverRoles} />
+      <OfeedPanel />
     </div>
   );
 }

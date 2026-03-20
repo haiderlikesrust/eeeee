@@ -27,15 +27,28 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/ws': {
-        target: 'ws://localhost:14702',
+        // Use http + changeOrigin so the upgrade is proxied reliably (ws:// target can fail on some setups).
+        target: 'http://localhost:14702',
+        changeOrigin: true,
         ws: true,
-        rewrite: (path) => path.replace(/^\/ws/, ''),
+        // Path must stay a valid URL path: `/ws?token=…` → `/?token=…` (not `?token=…` alone).
+        rewrite: (path) => {
+          const rest = path.replace(/^\/ws/, '') || '/';
+          if (rest.startsWith('?')) return `/${rest}`;
+          return rest.startsWith('/') ? rest : `/${rest}`;
+        },
         configure: (proxy) => {
           proxy.on('error', (err, _req, _res) => {
-            // ECONNRESET is normal when the backend or client closes the WebSocket (restart, tab close, etc.)
-            if (err.code !== 'ECONNRESET') {
-              console.error('[vite] ws proxy error:', err);
-            }
+            // Harmless closes: backend restart, HMR reconnect, tab close. Node/http-proxy may set code
+            // and/or message ("read ECONNRESET") inconsistently.
+            const code = err?.code;
+            const msg = String(err?.message || '');
+            const benign =
+              code === 'ECONNRESET' ||
+              code === 'EPIPE' ||
+              code === 'ECONNABORTED' ||
+              /ECONNRESET|EPIPE|socket hang up/i.test(msg);
+            if (!benign) console.error('[vite] ws proxy error:', err);
           });
         },
       },

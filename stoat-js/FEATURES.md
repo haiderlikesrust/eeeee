@@ -111,6 +111,13 @@ This JavaScript port implements **all** REST API features from the [Rust Stoat b
 - `POST /push/subscribe` – Web push subscribe
 - `POST /push/unsubscribe` – Unsubscribe
 
+### Ofeed (global social feed — Opic extension)
+- `GET /ofeed/posts` – List posts (newest first; query: `limit`, `before`). Public; optional session for `liked` on posts.
+- `GET /ofeed/posts/:id` – Single post (share / deep link). Public; optional session.
+- `POST /ofeed/posts` – Create post (`content` max 280) or **repost** (`repost_of` id, optional `content` for quote). Auth required. One repost per user per original (`409` if duplicate).
+- `POST /ofeed/posts/:id/like` – Toggle like. Auth required.
+- `DELETE /ofeed/posts/:id` – Delete own post (decrements original `repost_count` if repost). Auth required.
+
 ### Webhooks (channel webhooks)
 - `GET /webhooks/:id` – Fetch (auth)
 - `GET /webhooks/:id/:token` – Fetch with token
@@ -119,18 +126,36 @@ This JavaScript port implements **all** REST API features from the [Rust Stoat b
 - `PATCH /webhooks/:id`, `PATCH /webhooks/:id/:token` – Edit
 - `DELETE /webhooks/:id`, `DELETE /webhooks/:id/:token` – Delete
 
-### WebSocket
-- Same server: `ws://host/?token=<session_token>` – Ready, Ping/Pong
+### WebSocket (Bonfire-style gateway)
+
+Same HTTP server as REST: `ws://host/?token=<session_token>` (or `x-session-token` header). Bots: `?bot_token=` / `x-bot-token`, optional `intents`.
+
+**Client → server**
+
+- `Ping` → `Pong`
+- `VoiceJoin` / `VoiceLeave` / `VoiceSignal` – WebRTC voice signaling
+- `TypingStart` / `TypingStop` – typing indicators
+
+**Server → client (non-exhaustive)**
+
+- `Ready` – `users`, `servers`, `channels`, `voiceStates`
+- `MESSAGE_CREATE`, `MESSAGE_UPDATE`, `MESSAGE_DELETE` – fan-out from REST/bot routes (see `routes/channels.js`, `routes/botPublic.js`)
+- `PresenceUpdate` – member online/offline per server
+- `TypingStart` / `TypingStop`
+- `VoiceStateUpdate`, `VoiceReady`, `VoiceSignal`
+
+REST handlers call `broadcastToChannel` / `broadcastToServer` / `broadcastToUser` in `src/events.js`. Multi-instance deployments need sticky sessions or a shared pub/sub layer so every user receives events (see repo `docs/DEPLOYMENT.md`).
 
 ---
 
 ## Not in this port (Rust-only services)
 
-- **Autumn** – File upload/server (S3/MinIO). Use external storage or add a simple upload route.
+- **Autumn** – Dedicated media service. This repo has `POST /attachments` (local disk or optional S3) instead.
 - **January** – Proxy service
 - **Gifbox** – Tenor proxy
-- **Pushd** – Push daemon (we store push subscriptions only)
-- **Crond** – Scheduled tasks
-- **Full Bonfire events** – We send Ready + Ping/Pong; full event fan-out would need more wiring
+- **Crond** – Scheduled tasks (no in-repo scheduler)
+- **Full Stoat/Rust Bonfire parity** – Event shapes aim to match client expectations; edge cases may differ.
 
-All delta REST routes from the Rust backend are implemented. MFA is stubbed for compatibility; file uploads use placeholders or external URLs.
+**Push:** `POST /push/subscribe` stores Web Push subscriptions; delivery uses VAPID when configured (`web-push`). Without `VAPID_*` keys, subscriptions are stored but notifications are not sent.
+
+All delta REST routes from the Rust backend are implemented. MFA is stubbed for compatibility.

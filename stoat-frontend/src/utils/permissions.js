@@ -61,6 +61,40 @@ export function hasPermission(perms, perm) {
   return (perms & perm) === perm;
 }
 
+/**
+ * Server-wide check: Administrator grants every permission (matches backend computeServerPermissions).
+ */
+export function hasServerPermission(perms, perm) {
+  const p = Number(perms) || 0;
+  if ((p & Permissions.ADMINISTRATOR) === Permissions.ADMINISTRATOR) return true;
+  return hasPermission(p, perm);
+}
+
+/**
+ * For editing a role or @everyone bitfield: Administrator implies every permission in the UI
+ * (matches backend computeServerPermissions).
+ */
+export function hasEffectiveRolePermission(bitfield, perm) {
+  const v = Number(bitfield) || 0;
+  if ((v & Permissions.ADMINISTRATOR) === Permissions.ADMINISTRATOR) return true;
+  return hasPermission(v, perm);
+}
+
+/**
+ * Toggle one permission in a role bitfield. If Administrator is set, turning off any other
+ * permission clears Administrator and that bit (Discord-style).
+ */
+export function toggleRolePermissionBitmask(value, permKey, bit) {
+  const v = Number(value) || 0;
+  if (permKey === 'ADMINISTRATOR') {
+    return (v & bit) === bit ? v & ~bit : v | bit;
+  }
+  if ((v & Permissions.ADMINISTRATOR) === Permissions.ADMINISTRATOR) {
+    return (v & ~Permissions.ADMINISTRATOR) & ~bit;
+  }
+  return (v & bit) === bit ? v & ~bit : v | bit;
+}
+
 export function computeServerPermissions(server, member) {
   if (!server || !member) return 0;
   const userId = typeof member.user === 'object' ? member.user._id : member.user;

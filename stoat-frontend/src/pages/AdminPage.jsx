@@ -45,8 +45,8 @@ export default function AdminPage() {
   const [checking, setChecking] = useState(true);
   const [me, setMe] = useState(null);
 
-  const [email, setEmail] = useState('admin@admin.com');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
 
@@ -64,7 +64,47 @@ export default function AdminPage() {
   const [userBadgeDrafts, setUserBadgeDrafts] = useState({});
   const [searchingUsers, setSearchingUsers] = useState(false);
 
+  const [stats, setStats] = useState(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [statsError, setStatsError] = useState('');
+
+  const [activeTab, setActiveTab] = useState('overview');
+
+  const [reportList, setReportList] = useState([]);
+  const [reportTotal, setReportTotal] = useState(0);
+  const [loadingReports, setLoadingReports] = useState(false);
+  const [reportDetailById, setReportDetailById] = useState({});
+  const [expandedReportId, setExpandedReportId] = useState(null);
+
   const activeBadges = useMemo(() => badges.filter((b) => b.active), [badges]);
+
+  const tabs = useMemo(
+    () => [
+      { id: 'overview', label: 'Overview' },
+      { id: 'badges', label: 'Badges' },
+      { id: 'users', label: 'Users' },
+      { id: 'moderation', label: 'Moderation' },
+    ],
+    [],
+  );
+
+  const statCards = useMemo(
+    () => [
+      { key: 'users', label: 'Users' },
+      { key: 'bot_users', label: 'Bot users' },
+      { key: 'servers', label: 'Servers' },
+      { key: 'channels', label: 'Channels' },
+      { key: 'messages', label: 'Messages' },
+      { key: 'reports', label: 'Reports' },
+      { key: 'members', label: 'Member rows' },
+      { key: 'invites', label: 'Invites' },
+      { key: 'webhooks', label: 'Webhooks' },
+      { key: 'bot_apps', label: 'Bot apps' },
+      { key: 'global_badges', label: 'Global badges' },
+      { key: 'active_badges', label: 'Active badges' },
+    ],
+    [],
+  );
 
   useEffect(() => {
     const boot = async () => {
@@ -76,6 +116,7 @@ export default function AdminPage() {
         const meRes = await adminFetch('/me', { token });
         setMe(meRes);
         await loadBadges(token);
+        await loadStats(token);
       } catch {
         setAdminToken('');
         setToken('');
@@ -85,6 +126,11 @@ export default function AdminPage() {
     };
     boot();
   }, []);
+
+  useEffect(() => {
+    if (!token || !me || activeTab !== 'moderation') return;
+    loadReportList();
+  }, [activeTab, token, me]);
 
   async function loadBadges(activeToken = token) {
     setLoadingBadges(true);
@@ -97,6 +143,83 @@ export default function AdminPage() {
     setLoadingBadges(false);
   }
 
+  async function loadStats(activeToken = token) {
+    setLoadingStats(true);
+    setStatsError('');
+    try {
+      const data = await adminFetch('/stats', { token: activeToken });
+      setStats(data);
+    } catch (err) {
+      setStats(null);
+      setStatsError(err?.error || 'Failed to load stats');
+    }
+    setLoadingStats(false);
+  }
+
+  async function loadReportList(activeToken = token) {
+    setLoadingReports(true);
+    try {
+      const data = await adminFetch('/reports?limit=50', { token: activeToken });
+      setReportList(Array.isArray(data?.reports) ? data.reports : []);
+      setReportTotal(typeof data?.total === 'number' ? data.total : 0);
+    } catch (err) {
+      toast.error(err?.error || 'Failed to load reports');
+      setReportList([]);
+      setReportTotal(0);
+    }
+    setLoadingReports(false);
+  }
+
+  async function toggleReportDetail(reportId) {
+    if (expandedReportId === reportId) {
+      setExpandedReportId(null);
+      return;
+    }
+    if (!reportDetailById[reportId]) {
+      try {
+        const detail = await adminFetch(`/reports/${reportId}`, { token });
+        setReportDetailById((prev) => ({ ...prev, [reportId]: detail }));
+      } catch (err) {
+        toast.error(err?.error || 'Failed to load report');
+        return;
+      }
+    }
+    setExpandedReportId(reportId);
+  }
+
+  async function deleteReport(reportId) {
+    if (!confirm('Delete this report permanently?')) return;
+    try {
+      await adminFetch(`/reports/${reportId}`, { method: 'DELETE', token });
+      setReportList((prev) => prev.filter((r) => r.id !== reportId));
+      setReportTotal((t) => Math.max(0, t - 1));
+      setReportDetailById((prev) => {
+        const next = { ...prev };
+        delete next[reportId];
+        return next;
+      });
+      if (expandedReportId === reportId) setExpandedReportId(null);
+      await loadStats();
+      toast.success('Report deleted');
+    } catch (err) {
+      toast.error(err?.error || 'Failed to delete report');
+    }
+  }
+
+  async function setUserPrivileged(userId, privileged) {
+    try {
+      const updated = await adminFetch(`/users/${userId}`, {
+        method: 'PATCH',
+        token,
+        body: { privileged },
+      });
+      setUserResults((prev) => prev.map((u) => (u._id === userId ? { ...u, ...updated } : u)));
+      toast.success(privileged ? 'User marked as privileged' : 'Privileged access removed');
+    } catch (err) {
+      toast.error(err?.error || 'Failed to update user');
+    }
+  }
+
   const login = async (e) => {
     e.preventDefault();
     setLoginError('');
@@ -105,8 +228,12 @@ export default function AdminPage() {
       const res = await adminFetch('/login', { method: 'POST', body: { email, password } });
       setAdminToken(res.token);
       setToken(res.token);
-      setMe(res.admin || { email });
+      setMe({
+        ...(res.admin || { email }),
+        session_expires_at: res.session_expires_at || null,
+      });
       await loadBadges(res.token);
+      await loadStats(res.token);
       toast.success('Admin login successful');
     } catch (err) {
       setLoginError(err?.error || 'Invalid credentials');
@@ -124,6 +251,13 @@ export default function AdminPage() {
     setBadges([]);
     setUserResults([]);
     setUserBadgeDrafts({});
+    setStats(null);
+    setStatsError('');
+    setActiveTab('overview');
+    setReportList([]);
+    setReportTotal(0);
+    setReportDetailById({});
+    setExpandedReportId(null);
   };
 
   const uploadBadgeIcon = async (file) => {
@@ -265,14 +399,139 @@ export default function AdminPage() {
       <header className="admin-header">
         <div>
           <h1>Admin Panel</h1>
-          <p>{me.email}</p>
+          <p className="admin-header-email">{me.email}</p>
+          {me.session_expires_at && (
+            <p className="admin-session-meta">
+              Session expires {new Date(me.session_expires_at).toLocaleString()}
+            </p>
+          )}
         </div>
         <div className="admin-header-actions">
           <Link to="/channels/@me" className="admin-link-btn">Open App</Link>
-          <button onClick={logout} className="admin-danger-btn">Logout</button>
+          <button type="button" onClick={logout} className="admin-danger-btn">Logout</button>
         </div>
       </header>
 
+      <nav className="admin-tabs" aria-label="Admin sections">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={`admin-tab ${activeTab === t.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === 'overview' && (
+      <section className="admin-section admin-overview">
+        <div className="admin-overview-head">
+          <h2>Overview</h2>
+          <div className="admin-overview-head-actions">
+            {stats?.generated_at && (
+              <span className="admin-stats-generated">Updated {new Date(stats.generated_at).toLocaleString()}</span>
+            )}
+            <button type="button" onClick={() => loadStats()} disabled={loadingStats} className="admin-link-btn">
+              {loadingStats ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+        </div>
+        {statsError && <div className="admin-error admin-stats-error">{statsError}</div>}
+        {loadingStats && !stats ? (
+          <p className="admin-stats-loading">Loading stats…</p>
+        ) : (
+          <>
+            <div className="admin-stats-grid">
+              {statCards.map(({ key, label }) => (
+                <div key={key} className="admin-stat-card">
+                  <span className="admin-stat-value">
+                    {stats?.counts && typeof stats.counts[key] === 'number'
+                      ? stats.counts[key].toLocaleString()
+                      : '—'}
+                  </span>
+                  <span className="admin-stat-label">{label}</span>
+                </div>
+              ))}
+            </div>
+            <div className="admin-activity-grid">
+              <div className="admin-activity-block">
+                <h3>Recent reports</h3>
+                {(stats?.recent_reports || []).length === 0 ? (
+                  <p className="admin-empty">No reports yet.</p>
+                ) : (
+                  <div className="admin-mini-table-wrap">
+                    <table className="admin-mini-table">
+                      <thead>
+                        <tr>
+                          <th>When</th>
+                          <th>Reporter</th>
+                          <th>Reason</th>
+                          <th>Preview</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(stats.recent_reports || []).map((r) => (
+                          <tr key={r.id}>
+                            <td>{r.created_at ? new Date(r.created_at).toLocaleString() : '—'}</td>
+                            <td>
+                              <div>{r.author_display_name || r.author_username || '—'}</div>
+                              <code className="admin-id-sub">{r.author_id}</code>
+                            </td>
+                            <td>{r.reason || '—'}</td>
+                            <td className="admin-preview-cell">{r.content_preview || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              <div className="admin-activity-block">
+                <h3>Recent audit log</h3>
+                {(stats?.recent_audit || []).length === 0 ? (
+                  <p className="admin-empty">No audit entries yet.</p>
+                ) : (
+                  <div className="admin-mini-table-wrap">
+                    <table className="admin-mini-table">
+                      <thead>
+                        <tr>
+                          <th>When</th>
+                          <th>Server</th>
+                          <th>User</th>
+                          <th>Action</th>
+                          <th>Target</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(stats.recent_audit || []).map((a) => (
+                          <tr key={a.id}>
+                            <td>{a.created_at ? new Date(a.created_at).toLocaleString() : '—'}</td>
+                            <td>
+                              <div>{a.server_name || '—'}</div>
+                              <code className="admin-id-sub">{a.server_id}</code>
+                            </td>
+                            <td><code className="admin-id-sub">{a.user}</code></td>
+                            <td>{a.action}</td>
+                            <td>
+                              <div>{a.target_type || '—'}</div>
+                              {a.target_id ? <code className="admin-id-sub">{a.target_id}</code> : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+      )}
+
+      {activeTab === 'badges' && (
       <section className="admin-section">
         <h2>Global Badge Catalog</h2>
         <div className="admin-create-badge">
@@ -361,9 +620,12 @@ export default function AdminPage() {
           </div>
         )}
       </section>
+      )}
 
+      {activeTab === 'users' && (
       <section className="admin-section">
-        <h2>Assign Badges to Users</h2>
+        <h2>Users</h2>
+        <p className="admin-section-intro">Search accounts, assign global badges, or grant privileged access.</p>
         <div className="admin-user-search">
           <input
             placeholder="Search by username, display name, or user id"
@@ -380,6 +642,14 @@ export default function AdminPage() {
                 <strong>{u.display_name || u.username}</strong>
                 <span>{u.username}#{u.discriminator}</span>
                 <code>{u._id}</code>
+                <label className="admin-checkbox admin-privileged">
+                  <input
+                    type="checkbox"
+                    checked={!!u.privileged}
+                    onChange={(e) => setUserPrivileged(u._id, e.target.checked)}
+                  />
+                  Privileged
+                </label>
               </div>
               <div className="admin-user-badges">
                 {activeBadges.map((b) => {
@@ -398,6 +668,76 @@ export default function AdminPage() {
           ))}
         </div>
       </section>
+      )}
+
+      {activeTab === 'moderation' && (
+      <section className="admin-section admin-moderation">
+        <div className="admin-moderation-head">
+          <h2>Reports</h2>
+          <button
+            type="button"
+            onClick={() => loadReportList()}
+            disabled={loadingReports}
+            className="admin-link-btn"
+          >
+            {loadingReports ? 'Loading…' : 'Refresh'}
+          </button>
+        </div>
+        <p className="admin-section-intro">
+          {reportTotal.toLocaleString()} total
+          {reportList.length < reportTotal ? ` · showing ${reportList.length}` : ''}
+        </p>
+        {loadingReports && reportList.length === 0 ? (
+          <p className="admin-stats-loading">Loading reports…</p>
+        ) : reportList.length === 0 ? (
+          <p className="admin-empty">No reports.</p>
+        ) : (
+          <div className="admin-report-list">
+            {reportList.map((r) => {
+              const detail = reportDetailById[r.id];
+              const open = expandedReportId === r.id;
+              let detailText = '';
+              if (detail?.content !== undefined) {
+                try {
+                  detailText = typeof detail.content === 'string'
+                    ? detail.content
+                    : JSON.stringify(detail.content, null, 2);
+                } catch {
+                  detailText = String(detail.content);
+                }
+              }
+              return (
+                <div key={r.id} className="admin-report-card">
+                  <div className="admin-report-row">
+                    <div className="admin-report-meta">
+                      <span>{r.created_at ? new Date(r.created_at).toLocaleString() : '—'}</span>
+                      <code className="admin-report-id">{r.id}</code>
+                    </div>
+                    <div className="admin-report-actions">
+                      <button type="button" className="admin-link-btn" onClick={() => toggleReportDetail(r.id)}>
+                        {open ? 'Hide detail' : 'View full payload'}
+                      </button>
+                      <button type="button" className="admin-danger-btn" onClick={() => deleteReport(r.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                  <div className="admin-report-reporter">
+                    <strong>{r.author_display_name || r.author_username || 'Unknown'}</strong>
+                    <code className="admin-id-sub">{r.author_id}</code>
+                  </div>
+                  <div className="admin-report-reason"><span>Reason:</span> {r.reason || '—'}</div>
+                  <div className="admin-report-preview">{r.content_preview || '—'}</div>
+                  {open && detailText ? (
+                    <pre className="admin-report-json">{detailText}</pre>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+      )}
     </div>
   );
 }

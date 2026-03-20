@@ -44,12 +44,10 @@ export function NotificationProvider({ children }) {
 
   useEffect(() => {
     if (!on) return;
-    return on('Message', (data) => {
+    const handleIncomingMessage = (data) => {
       if (!data || !user) return;
       const authorId = typeof data.author === 'object' ? data.author?._id : data.author;
-      // Don't notify for own messages
       if (authorId === user._id) return;
-      // Don't notify if user is viewing this channel
       if (data.channel === activeChannelRef.current && document.hasFocus()) return;
 
       const authorName = typeof data.author === 'object'
@@ -57,27 +55,30 @@ export function NotificationProvider({ children }) {
         : 'Someone';
       const content = data.content?.slice(0, 100) || '(attachment)';
 
-      // Play sound
       if (soundEnabled) playNotificationSound();
 
-      // Desktop notification (not supported on iOS Safari)
       if (enabled && !document.hasFocus() && typeof window !== 'undefined' && 'Notification' in window) {
         try {
           const notif = new Notification(authorName, {
             body: content,
             icon: '/favicon.ico',
-            tag: data._id, // prevents duplicate notifications
-            silent: true, // we play our own sound
+            tag: data._id,
+            silent: true,
           });
           notif.onclick = () => {
             window.focus();
             notif.close();
           };
-          // Auto-close after 5s
           setTimeout(() => notif.close(), 5000);
         } catch {}
       }
-    });
+    };
+    const unsubCreate = on('MESSAGE_CREATE', handleIncomingMessage);
+    const unsubLegacy = on('Message', handleIncomingMessage);
+    return () => {
+      unsubCreate?.();
+      unsubLegacy?.();
+    };
   }, [on, user, enabled, soundEnabled]);
 
   return (

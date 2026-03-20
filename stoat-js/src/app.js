@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
+import config from '../config.js';
 import { ratelimit } from './middleware/ratelimit.js';
 import logger from './logger.js';
 import root from './routes/root.js';
@@ -21,12 +22,17 @@ import webhooks from './routes/webhooks.js';
 import uploads from './routes/uploads.js';
 import admin from './routes/admin.js';
 import botPublic from './routes/botPublic.js';
+import ofeed from './routes/ofeed.js';
 
 const app = express();
 
+const corsOptions = config.corsOrigins?.length
+  ? { origin: config.corsOrigins, credentials: true }
+  : { origin: true, credentials: true };
+
 // Compress JSON and text responses to reduce payload size and improve network efficiency
 app.use(compression());
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors(corsOptions));
 // Parse text/plain as JSON (client sometimes sends JSON with this content-type)
 app.use((req, res, next) => {
   const ct = req.headers['content-type'] || '';
@@ -80,6 +86,7 @@ app.use('/webhooks', webhooks);
 app.use('/attachments', uploads);
 app.use('/admin', ratelimit({ max: 60 }), admin);
 app.use('/bot', ratelimit({ max: 180 }), botPublic);
+app.use('/ofeed', ratelimit({ max: 60 }), ofeed);
 
 // Optional 0.8 prefix (Stoat API version)
 app.use('/0.8', root);
@@ -99,6 +106,7 @@ app.use('/0.8/push', push);
 app.use('/0.8/webhooks', webhooks);
 app.use('/0.8/admin', ratelimit({ max: 60 }), admin);
 app.use('/0.8/bot', ratelimit({ max: 180 }), botPublic);
+app.use('/0.8/ofeed', ratelimit({ max: 60 }), ofeed);
 
 app.use((err, req, res, next) => {
   logger.error({ err, msg: 'Unhandled error', path: req.path, method: req.method });

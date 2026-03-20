@@ -7,6 +7,7 @@ import {
 import { authMiddleware } from '../middleware/auth.js';
 import { toPublicUser } from '../publicUser.js';
 import { broadcastToChannel, broadcastToServer, GatewayIntents, isUserOnline } from '../events.js';
+import { notifyPushForNewMessage } from '../pushNotify.js';
 import { fetchLinkPreviewsForContent } from '../linkPreview.js';
 import {
   Permissions, ALL_PERMISSIONS, computeChannelPermissions, computeServerPermissions, hasPermission,
@@ -353,17 +354,18 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
   });
   ch.last_message_id = msgId;
   await ch.save();
-  // Respond and broadcast immediately; link preview runs off critical path to reduce latency
+  // HTTP response before WS fan-out so clients are not blocked on Member.find + delivery
   const author = await User.findById(req.userId)
     .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
     .lean();
   const authorMap = { [req.userId]: author };
   const replyContext = await fetchReplyContext(replyIds, authorMap);
   const payload = messageToJson(msg, authorMap, replyContext);
-  await broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
-    eventIntent: GatewayIntents.GUILD_MESSAGES,
-  });
   res.status(201).json(payload);
+  void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
+    eventIntent: GatewayIntents.GUILD_MESSAGES,
+  }).catch(() => {});
+  notifyPushForNewMessage(ch, req.userId, payload);
 
   // Fetch link previews after response; avoids blocking the request (up to ~3.5s per URL)
   if (content && /https?:\/\//i.test(content)) {

@@ -8,4 +8,6 @@ const reportSchema = new mongoose.Schema({
   created_at: { type: Date, default: Date.now },
 }, { id: false });
 
+reportSchema.index({ created_at: -1 });
+
 export default mongoose.model('Report', reportSchema);

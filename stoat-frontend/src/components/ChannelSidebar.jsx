@@ -6,7 +6,7 @@ import { useVoice } from '../context/VoiceContext';
 import { useMobile } from '../context/MobileContext';
 import { useUnread } from '../context/UnreadContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
-import { Permissions, hasPermission, ALL_PERMISSIONS } from '../utils/permissions';
+import { Permissions, hasPermission, hasServerPermission } from '../utils/permissions';
 import { get, post, patch, del } from '../api';
 import ServerSettings from './ServerSettings';
 import UserSettings from './UserSettings';
@@ -64,24 +64,27 @@ function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreate
   const [inviteCode, setInviteCode] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
   const voice = useVoice();
-  const [serverPerms, setServerPerms] = useState(ALL_PERMISSIONS);
+  /** Bitfield from GET /servers/:id/permissions. Default 0 until loaded — never assume full perms. */
+  const [serverPerms, setServerPerms] = useState(0);
   const [profileCard, setProfileCard] = useState(null);
 
   const isOwner = server && user && server.owner === user._id;
-  const canManageChannels = hasPermission(serverPerms, Permissions.MANAGE_CHANNELS);
-  const canManageServer = hasPermission(serverPerms, Permissions.MANAGE_SERVER) || isOwner;
-  const canCreateInvites = hasPermission(serverPerms, Permissions.CREATE_INVITES);
+  const canManageChannels = hasServerPermission(serverPerms, Permissions.MANAGE_CHANNELS);
+  const canManageServer = hasServerPermission(serverPerms, Permissions.MANAGE_SERVER) || isOwner;
+  const canCreateInvites = hasServerPermission(serverPerms, Permissions.CREATE_INVITES);
   const canAccessSettings = canManageServer
-    || hasPermission(serverPerms, Permissions.MANAGE_ROLES)
-    || hasPermission(serverPerms, Permissions.MANAGE_CHANNELS)
-    || hasPermission(serverPerms, Permissions.KICK_MEMBERS)
-    || hasPermission(serverPerms, Permissions.BAN_MEMBERS);
+    || hasServerPermission(serverPerms, Permissions.MANAGE_ROLES)
+    || hasServerPermission(serverPerms, Permissions.MANAGE_CHANNELS)
+    || hasServerPermission(serverPerms, Permissions.KICK_MEMBERS)
+    || hasServerPermission(serverPerms, Permissions.BAN_MEMBERS)
+    || hasServerPermission(serverPerms, Permissions.ADMINISTRATOR);
 
   useEffect(() => {
     if (serverId && type !== 'home') {
+      setServerPerms(0);
       get(`/servers/${serverId}/permissions`)
-        .then(p => setServerPerms(p?.permissions ?? ALL_PERMISSIONS))
-        .catch(() => setServerPerms(ALL_PERMISSIONS));
+        .then((p) => setServerPerms(typeof p?.permissions === 'number' ? p.permissions : 0))
+        .catch(() => setServerPerms(0));
     }
   }, [serverId, type]);
 

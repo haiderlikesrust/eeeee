@@ -301,12 +301,12 @@ export async function broadcastToChannel(channelId, event, options = {}) {
   } else if (channel.channel_type === 'DirectMessage' || channel.channel_type === 'Group') {
     allowedUsers = channel.recipients || [];
   }
-  const allowSet = new Set(allowedUsers);
+  const allowSet = new Set(allowedUsers.map((id) => String(id)));
 
   for (const [, entry] of clients.entries()) {
     if (entry.ws.readyState !== 1) continue;
-    if (!allowSet.has(entry.userId)) continue;
-    if (options.excludeUserId && entry.userId === options.excludeUserId) continue;
+    if (!allowSet.has(String(entry.userId))) continue;
+    if (options.excludeUserId != null && String(entry.userId) === String(options.excludeUserId)) continue;
     if (!canReceiveIntent(entry, options.eventIntent)) continue;
     entry.ws.send(payload);
   }

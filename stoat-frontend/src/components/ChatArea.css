@@ -75,6 +75,11 @@
   color: var(--header-primary);
 }
 
+.chat-header-btn--ofeed-active {
+  color: var(--accent);
+  background: rgba(74, 222, 128, 0.12);
+}
+
 .messages-list {
   flex: 1;
   overflow-y: auto;
@@ -97,6 +102,10 @@
 .welcome-msg p {
   color: var(--text-muted);
   font-size: 14px;
+}
+
+.message.msg-optimistic {
+  opacity: 0.94;
 }
 
 .message {
@@ -607,6 +616,12 @@
   vertical-align: middle;
 }
 
+/* Anchors mention/emoji popup above the input row (toolbar + field) */
+.chat-input-composer {
+  position: relative;
+  width: 100%;
+}
+
 /* Autocomplete popup */
 .autocomplete-popup {
   position: absolute;
@@ -617,10 +632,14 @@
   border: 1px solid var(--input-border);
   border-radius: var(--radius-md);
   box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
-  max-height: 250px;
+  max-height: min(280px, 40vh);
   overflow-y: auto;
   z-index: 50;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+.autocomplete-popup-mention {
+  min-width: 260px;
 }
 
 .ac-item {

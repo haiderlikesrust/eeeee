@@ -5,7 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import {
   Permissions, PERMISSION_INFO, CHANNEL_PERMISSION_INFO,
-  hasPermission, DEFAULT_EVERYONE_PERMS,
+  hasPermission, hasServerPermission, hasEffectiveRolePermission, toggleRolePermissionBitmask,
+  DEFAULT_EVERYONE_PERMS,
 } from '../utils/permissions';
 import './ServerSettings.css';
 
@@ -16,7 +17,10 @@ function PermissionEditor({ value, onChange, items, label }) {
       <div className="perm-list">
         {items.map((p) => {
           const bit = Permissions[p.key];
-          const enabled = (value & bit) === bit;
+          const isAdmin = p.key === 'ADMINISTRATOR';
+          const enabled = isAdmin
+            ? (Number(value) & bit) === bit
+            : hasEffectiveRolePermission(value, bit);
           return (
             <div key={p.key} className={`perm-row ${p.dangerous ? 'dangerous' : ''}`}>
               <div className="perm-info">
@@ -24,8 +28,9 @@ function PermissionEditor({ value, onChange, items, label }) {
                 <span className="perm-desc">{p.description}</span>
               </div>
               <button
+                type="button"
                 className={`perm-toggle ${enabled ? 'on' : 'off'}`}
-                onClick={() => onChange(enabled ? value & ~bit : value | bit)}
+                onClick={() => onChange(toggleRolePermissionBitmask(value, p.key, bit))}
                 title={enabled ? 'Disable' : 'Enable'}
               >
                 <div className="perm-toggle-track">
@@ -131,11 +136,11 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const toast = useToast();
 
   const isOwner = user?._id === server?.owner;
-  const canManageServer = isOwner || hasPermission(userPerms, Permissions.MANAGE_SERVER);
-  const canManageRoles = isOwner || hasPermission(userPerms, Permissions.MANAGE_ROLES);
-  const canManageChannels = isOwner || hasPermission(userPerms, Permissions.MANAGE_CHANNELS);
-  const canKick = isOwner || hasPermission(userPerms, Permissions.KICK_MEMBERS);
-  const canBan = isOwner || hasPermission(userPerms, Permissions.BAN_MEMBERS);
+  const canManageServer = isOwner || hasServerPermission(userPerms, Permissions.MANAGE_SERVER);
+  const canManageRoles = isOwner || hasServerPermission(userPerms, Permissions.MANAGE_ROLES);
+  const canManageChannels = isOwner || hasServerPermission(userPerms, Permissions.MANAGE_CHANNELS);
+  const canKick = isOwner || hasServerPermission(userPerms, Permissions.KICK_MEMBERS);
+  const canBan = isOwner || hasServerPermission(userPerms, Permissions.BAN_MEMBERS);
   const canManageMembers = canKick || canBan || canManageRoles;
 
   const availableTabs = [];

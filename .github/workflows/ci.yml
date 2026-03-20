@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  stoat-js:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: stoat-js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: stoat-js/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  stoat-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: stoat-frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: stoat-frontend/package-lock.json
+      - run: npm ci
+      - run: npm test

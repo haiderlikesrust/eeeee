@@ -1,15 +1,28 @@
 import { Router } from 'express';
 import { ulid } from 'ulid';
 import {
-  Bot, User, Channel, Message, Member, Server,
+  Bot, User, Channel, Message, Member, Server, ServerBan,
 } from '../db/models/index.js';
 import { toPublicUser } from '../publicUser.js';
 import {
-  Permissions, computeChannelPermissions, hasPermission,
+  Permissions, computeChannelPermissions, computeServerPermissions, hasPermission, outranks, sameId,
 } from '../permissions.js';
-import { broadcastToChannel, broadcastToServer, GatewayIntents } from '../events.js';
+import { broadcastToChannel, broadcastToServer, broadcastToUser, GatewayIntents } from '../events.js';
+import { notifyPushForNewMessage } from '../pushNotify.js';
 
 const router = Router();
+
+/** When the command invoker is the server owner, bot moderation may skip bot-role kick/ban checks. */
+function readOwnerInvokerId(req) {
+  const raw = req.body?.invoker_user_id ?? req.headers['x-invoker-user-id'];
+  if (raw == null || raw === '') return null;
+  return String(raw);
+}
+
+function ownerDelegated(req, server) {
+  const invoker = readOwnerInvokerId(req);
+  return !!invoker && sameId(server.owner, invoker);
+}
 
 function botTokenFrom(req) {
   const auth = req.headers['authorization'] || '';
@@ -50,6 +63,21 @@ async function getChannelPerms(ch, userId) {
   const member = await Member.findOne({ server: ch.server, user: userId });
   if (!member) return null;
   return { perms: computeChannelPermissions(server, member, ch), server, member };
+}
+
+async function getBotServerContext(req, res, serverId) {
+  const server = await Server.findById(serverId);
+  if (!server) {
+    res.status(404).json({ type: 'NotFound', error: 'Server not found' });
+    return null;
+  }
+  const member = await Member.findOne({ server: server._id, user: req.userId });
+  if (!member) {
+    res.status(403).json({ type: 'Forbidden', error: 'Bot is not a member of this server' });
+    return null;
+  }
+  const perms = computeServerPermissions(server, member);
+  return { server, member, perms };
 }
 
 function messageToJson(m, authorMap = {}) {
@@ -218,11 +246,11 @@ router.post('/channels/:target/messages', botAuth, async (req, res) => {
     .lean();
   const payload = messageToJson(msg, { [req.userId]: author });
 
-  await broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
-    eventIntent: GatewayIntents.GUILD_MESSAGES,
-  });
-
   res.status(201).json(payload);
+  void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
+    eventIntent: GatewayIntents.GUILD_MESSAGES,
+  }).catch(() => {});
+  notifyPushForNewMessage(ch, req.userId, payload);
 });
 
 // PATCH /bot/channels/:target/messages/:msg
@@ -339,6 +367,125 @@ router.delete('/channels/:target/messages/:msg/reactions/:emoji', botAuth, async
   }, {
     eventIntent: GatewayIntents.GUILD_MESSAGES,
   });
+  res.status(204).send();
+});
+
+// --- Server moderation (same permission rules as /servers/* for user sessions) ---
+
+// GET /bot/servers/:target/members
+router.get('/servers/:target/members', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  const members = await Member.find({ server: ctx.server._id }).lean();
+  const userIds = members.map((m) => m.user).filter(Boolean);
+  const users = await User.find({ _id: { $in: userIds } }).lean();
+  const byId = Object.fromEntries(users.map((u) => [u._id, u]));
+  res.json(
+    members.map((m) => ({
+      _id: m._id,
+      server: m.server,
+      user: byId[m.user] ? toPublicUser(byId[m.user], { relationship: 'None', online: false }) : m.user,
+      nickname: m.nickname,
+      avatar: m.avatar,
+      roles: m.roles,
+      joined_at: m.joined_at,
+    })),
+  );
+});
+
+// DELETE /bot/servers/:target/members/:member
+router.delete('/servers/:target/members/:member', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  const targetMember = await Member.findOne({ _id: req.params.member, server: ctx.server._id });
+  if (!targetMember) return res.status(404).json({ type: 'NotFound', error: 'Member not found' });
+
+  const isSelf = sameId(targetMember.user, req.userId);
+  if (sameId(targetMember.user, ctx.server.owner)) {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Cannot remove owner' });
+  }
+
+  const delegated = ownerDelegated(req, ctx.server);
+  if (!isSelf) {
+    if (!delegated && !hasPermission(ctx.perms, Permissions.KICK_MEMBERS)) {
+      return res.status(403).json({
+        type: 'Forbidden',
+        error: 'You need the Kick Members permission (or Administrator) to remove other members.',
+        code: 'MISSING_KICK_MEMBERS',
+      });
+    }
+    if (!delegated && !outranks(ctx.server, ctx.member, targetMember)) {
+      return res.status(403).json({
+        type: 'Forbidden',
+        error: 'You cannot kick a member whose highest role is above or equal to yours.',
+        code: 'ROLE_HIERARCHY',
+      });
+    }
+  }
+
+  const removedUserId = targetMember.user;
+  await targetMember.deleteOne();
+  const leavePayload = {
+    type: 'ServerMemberLeave',
+    data: { serverId: ctx.server._id, userId: removedUserId },
+  };
+  broadcastToServer(ctx.server._id, leavePayload);
+  broadcastToUser(removedUserId, leavePayload);
+  res.status(204).send();
+});
+
+// PUT /bot/servers/:target/bans/:user
+router.put('/servers/:target/bans/:user', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  const delegated = ownerDelegated(req, ctx.server);
+  if (!delegated && !hasPermission(ctx.perms, Permissions.BAN_MEMBERS)) {
+    return res.status(403).json({
+      type: 'Forbidden',
+      error: 'You need the Ban Members permission (or Administrator) to ban members.',
+      code: 'MISSING_BAN_MEMBERS',
+    });
+  }
+  const targetMember = await Member.findOne({ server: ctx.server._id, user: req.params.user });
+  if (targetMember) {
+    if (sameId(targetMember.user, ctx.server.owner)) {
+      return res.status(400).json({ type: 'InvalidOperation', error: 'Cannot ban owner' });
+    }
+    if (!delegated && !outranks(ctx.server, ctx.member, targetMember) && !sameId(ctx.server.owner, req.userId)) {
+      return res.status(403).json({
+        type: 'Forbidden',
+        error: 'You cannot ban a member whose highest role is above or equal to yours.',
+        code: 'ROLE_HIERARCHY',
+      });
+    }
+  }
+  const reason = (req.body && req.body.reason) || undefined;
+  const banId = ulid();
+  await ServerBan.create({ _id: banId, server: ctx.server._id, user: req.params.user, reason: reason || undefined });
+  await Member.deleteOne({ server: ctx.server._id, user: req.params.user });
+  const leavePayload = {
+    type: 'ServerMemberLeave',
+    data: { serverId: ctx.server._id, userId: req.params.user },
+  };
+  broadcastToServer(ctx.server._id, leavePayload);
+  broadcastToUser(req.params.user, leavePayload);
+  const ban = await ServerBan.findById(banId).populate('user').lean();
+  res.json(ban);
+});
+
+// DELETE /bot/servers/:target/bans/:user
+router.delete('/servers/:target/bans/:user', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  const delegated = ownerDelegated(req, ctx.server);
+  if (!delegated && !hasPermission(ctx.perms, Permissions.BAN_MEMBERS)) {
+    return res.status(403).json({
+      type: 'Forbidden',
+      error: 'You need the Ban Members permission (or Administrator) to unban members.',
+      code: 'MISSING_BAN_MEMBERS',
+    });
+  }
+  await ServerBan.deleteOne({ server: ctx.server._id, user: req.params.user });
   res.status(204).send();
 });
 

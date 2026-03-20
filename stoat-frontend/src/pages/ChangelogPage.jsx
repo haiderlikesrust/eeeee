@@ -11,6 +11,19 @@ const TAGS = {
 
 const CHANGELOG = [
   {
+    version: '0.4.0',
+    date: '2026-03-20',
+    title: 'Ofeed (beta) & in-app shares',
+    changes: [
+      { tag: 'new', text: 'Global Ofeed (beta) — public timeline, compose, likes, reposts, and quote-style reposts; share posts with a copyable link to Home.' },
+      { tag: 'new', text: 'Ofeed deep links — `/channels/@me#ofeed_post=…` opens the feed and focuses the post; Ofeed is available on Friends and DM routes so links don’t bounce away.' },
+      { tag: 'new', text: 'Ofeed link previews in chat — pasted share URLs show a rich card (author, text, quoted originals); the raw URL is hidden once the preview is attached.' },
+      { tag: 'improved', text: 'Ofeed panel header — Beta badge next to the title and tagline “Share it with others.”' },
+      { tag: 'improved', text: 'Link unfurling — Ofeed share URLs resolve to lightweight metadata on the server without scraping the SPA shell.' },
+      { tag: 'new', text: 'GitHub Actions CI — runs `stoat-js` and `stoat-frontend` tests on push and pull requests.' },
+    ],
+  },
+  {
     version: '0.3.0',
     date: '2026-03-18',
     title: 'Production readiness & reliability',

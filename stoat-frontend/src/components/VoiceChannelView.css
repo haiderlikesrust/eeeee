@@ -23,6 +23,35 @@
   flex-shrink: 0;
 }
 
+.voice-view-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.voice-header-icon-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.voice-header-icon-btn:hover {
+  background: var(--bg-modifier-hover);
+  color: var(--header-primary);
+}
+
+.voice-header-icon-btn--active {
+  color: var(--accent);
+  background: rgba(74, 222, 128, 0.12);
+}
+
 .voice-view-body {
   flex: 1;
   display: flex;

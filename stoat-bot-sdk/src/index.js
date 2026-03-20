@@ -74,13 +74,17 @@ export class StoatBotClient extends EventEmitter {
     this._commandUnsub = null;
   }
 
-  async api(method, path, body) {
+  async api(method, path, body, opts = {}) {
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-bot-token': this.token,
+    };
+    if (opts.invokerUserId != null && opts.invokerUserId !== '') {
+      headers['x-invoker-user-id'] = String(opts.invokerUserId);
+    }
     const res = await fetch(joinUrl(this.baseUrl, `/bot${path}`), {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-bot-token': this.token,
-      },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.status === 204) return null;
@@ -127,6 +131,52 @@ export class StoatBotClient extends EventEmitter {
 
   getChannel(channelId) {
     return this.api('GET', `/channels/${channelId}`);
+  }
+
+  /** List members in a server (bot must be in the server). */
+  getServerMembers(serverId) {
+    return this.api('GET', `/servers/${serverId}/members`);
+  }
+
+  /**
+   * Remove a member by member document id (same as web UI kick).
+   * Requires Kick Members (or Administrator) on the bot, unless `invokerUserId` is the server owner.
+   */
+  kickMember(serverId, memberId, opts = {}) {
+    const payload = {};
+    if (opts.invokerUserId != null && opts.invokerUserId !== '') {
+      payload.invoker_user_id = String(opts.invokerUserId);
+    }
+    return this.api(
+      'DELETE',
+      `/servers/${serverId}/members/${encodeURIComponent(memberId)}`,
+      Object.keys(payload).length ? payload : undefined,
+      opts,
+    );
+  }
+
+  /**
+   * Ban a user id from the server.
+   * Pass `invokerUserId` in body options when the command author is the server owner (same as kick).
+   */
+  banUser(serverId, userId, body = {}) {
+    const { invokerUserId, ...rest } = body;
+    const payload = { ...rest };
+    if (invokerUserId != null && invokerUserId !== '') {
+      payload.invoker_user_id = String(invokerUserId);
+    }
+    const opts = invokerUserId != null && invokerUserId !== '' ? { invokerUserId } : {};
+    return this.api(
+      'PUT',
+      `/servers/${serverId}/bans/${encodeURIComponent(userId)}`,
+      Object.keys(payload).length ? payload : undefined,
+      opts,
+    );
+  }
+
+  /** Unban a user id. `invokerUserId` is sent as a header when the body is empty. */
+  unbanUser(serverId, userId, opts = {}) {
+    return this.api('DELETE', `/servers/${serverId}/bans/${encodeURIComponent(userId)}`, undefined, opts);
   }
 
   fetchMessages(channelId, { limit = 50 } = {}) {

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import mongoose from 'mongoose';
+import config from '../../config.js';
 
 const router = Router();
 
@@ -13,7 +14,7 @@ router.get('/', (req, res) => {
     },
     ws: process.env.WS_URL || `ws://localhost:${process.env.PORT || 14702}`,
     app: process.env.APP_URL || 'http://localhost:5173',
-    vapid: '',
+    vapid: config.vapidPublicKey || '',
   });
 });
 

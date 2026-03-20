@@ -32,6 +32,13 @@ export const Permissions = {
 
 export const ALL_PERMISSIONS = Object.values(Permissions).reduce((a, b) => a | b, 0);
 
+/** Compare user/server ids that may be ObjectId vs string. */
+export function sameId(a, b) {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
+
 export const DEFAULT_EVERYONE_PERMS =
   Permissions.SEND_MESSAGES |
   Permissions.READ_MESSAGES |
@@ -47,7 +54,7 @@ export const DEFAULT_EVERYONE_PERMS =
  */
 export function computeServerPermissions(server, member) {
   if (!server || !member) return 0;
-  if (server.owner === member.user) return ALL_PERMISSIONS;
+  if (sameId(server.owner, member.user)) return ALL_PERMISSIONS;
 
   let perms = server.default_permissions ?? DEFAULT_EVERYONE_PERMS;
 
@@ -70,7 +77,7 @@ export function computeServerPermissions(server, member) {
  */
 export function computeChannelPermissions(server, member, channel) {
   if (!server || !member || !channel) return 0;
-  if (server.owner === member.user) return ALL_PERMISSIONS;
+  if (sameId(server.owner, member.user)) return ALL_PERMISSIONS;
 
   let perms = computeServerPermissions(server, member);
   if (perms & Permissions.ADMINISTRATOR) return ALL_PERMISSIONS;
@@ -110,8 +117,8 @@ export function computeChannelPermissions(server, member, channel) {
  * Check if a member's highest role outranks another member's highest role.
  */
 export function outranks(server, actorMember, targetMember) {
-  if (server.owner === actorMember.user) return true;
-  if (server.owner === targetMember.user) return false;
+  if (sameId(server.owner, actorMember.user)) return true;
+  if (sameId(server.owner, targetMember.user)) return false;
 
   const roles = server.roles || {};
   const getHighestRank = (m) => {
@@ -129,7 +136,7 @@ export function outranks(server, actorMember, targetMember) {
  * Check if a member can manage a specific role (their highest role must be above it).
  */
 export function canManageRole(server, member, roleId) {
-  if (server.owner === member.user) return true;
+  if (sameId(server.owner, member.user)) return true;
   const roles = server.roles || {};
   const targetRole = roles[roleId];
   if (!targetRole) return false;

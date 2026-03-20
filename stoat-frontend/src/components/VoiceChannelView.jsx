@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useVoice } from '../context/VoiceContext';
 import { useAuth } from '../context/AuthContext';
 import { useMobile } from '../context/MobileContext';
+import { useOfeed } from '../context/OfeedContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import { get } from '../api';
 import './VoiceChannelView.css';
@@ -32,6 +33,7 @@ export default function VoiceChannelView({ channel }) {
     stopCamera,
   } = voice;
   const { isMobile, openChannelSidebar, openMemberSidebar } = useMobile();
+  const ofeed = useOfeed();
   const [memberUsers, setMemberUsers] = useState({});
   const [expandedScreenUserId, setExpandedScreenUserId] = useState(null);
   const [focusedScreenUserId, setFocusedScreenUserId] = useState(null);
@@ -97,11 +99,23 @@ export default function VoiceChannelView({ channel }) {
           <path fill="currentColor" d="M11.383 3.07904C11.009 2.92504 10.579 3.01004 10.293 3.29604L6.586 7.00304H4C3.45 7.00304 3 7.45304 3 8.00304V16.003C3 16.553 3.45 17.003 4 17.003H6.586L10.293 20.71C10.579 20.996 11.009 21.082 11.383 20.927C11.757 20.772 12 20.407 12 20.003V4.00304C12 3.59904 11.757 3.23404 11.383 3.07904ZM14 5.00304V7.07304C16.892 7.55404 19 10.028 19 13.003C19 15.978 16.892 18.452 14 18.933V21.003C18.045 20.505 21 17.115 21 13.003C21 8.89104 18.045 5.50104 14 5.00304Z"/>
         </svg>
         <span>{channel?.name || 'Voice Channel'}</span>
-        {isMobile && (
-          <button className="mobile-drawer-btn" style={{ marginLeft: 'auto' }} onClick={openMemberSidebar} aria-label="Open members">
-            <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+        <div className="voice-view-header-actions">
+          <button
+            type="button"
+            className={`voice-header-icon-btn ${ofeed?.open ? 'voice-header-icon-btn--active' : ''}`}
+            onClick={() => ofeed?.toggle?.()}
+            title="Ofeed — mini feed"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
+              <path fill="currentColor" d="M4 4h16v2H4V4zm0 5h10v2H4V9zm0 5h16v2H4v-2zm0 5h10v2H4v-2z"/>
+            </svg>
           </button>
-        )}
+          {isMobile && (
+            <button className="mobile-drawer-btn" onClick={openMemberSidebar} aria-label="Open members">
+              <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="voice-view-body">

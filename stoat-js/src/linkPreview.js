@@ -119,11 +119,22 @@ async function fetchOEmbedPreview(url, signal) {
  * @returns {Promise<{ url: string, title?: string, description?: string, image?: string, site_name?: string } | null>}
  */
 export async function fetchLinkPreview(url) {
+  let u;
   try {
-    const u = new URL(url);
+    u = new URL(url);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
   } catch {
     return null;
+  }
+
+  const pathNorm = (u.pathname || '/').replace(/\/$/, '') || '/';
+  if (pathNorm.endsWith('/channels/@me') && /ofeed_post=/.test(u.hash)) {
+    return {
+      url,
+      site_name: 'Ofeed',
+      title: 'Ofeed post',
+      description: 'Share it with others',
+    };
   }
 
   const controller = new AbortController();

@@ -5,6 +5,7 @@ import { WebSocketProvider } from './context/WebSocketContext';
 import { VoiceProvider } from './context/VoiceContext';
 import { UnreadProvider } from './context/UnreadContext';
 import { NotificationProvider } from './context/NotificationContext';
+import { OfeedProvider } from './context/OfeedContext';
 
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
@@ -53,6 +54,7 @@ export default function App() {
       <VoiceProvider>
         <UnreadProvider>
           <NotificationProvider>
+            <OfeedProvider>
             <Suspense fallback={fallback}>
               <Routes>
                 <Route path="/admin" element={<AdminPage />} />
@@ -65,6 +67,7 @@ export default function App() {
                 <Route path="*" element={<Navigate to="/channels/@me" replace />} />
               </Routes>
             </Suspense>
+            </OfeedProvider>
           </NotificationProvider>
         </UnreadProvider>
       </VoiceProvider>

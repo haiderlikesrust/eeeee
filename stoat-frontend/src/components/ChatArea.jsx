@@ -5,6 +5,7 @@ import { useWS } from '../context/WebSocketContext';
 import { useMobile } from '../context/MobileContext';
 import { useUnread } from '../context/UnreadContext';
 import { useNotifications } from '../context/NotificationContext';
+import { useOfeed } from '../context/OfeedContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import { Permissions, hasPermission, ALL_PERMISSIONS } from '../utils/permissions';
 import { searchEmojis, ALL_EMOJIS } from '../utils/emojiData';
@@ -14,7 +15,41 @@ import ProfileCard from './ProfileCard';
 import Lightbox from './Lightbox';
 import FormattingToolbar from './FormattingToolbar';
 import ThreadPanel from './ThreadPanel';
+import OfeedShareLinkCard from './OfeedShareLinkCard';
+import { parseOfeedShareUrl, shouldHideOfeedUrlInMessage } from '../utils/ofeedShareUrl';
 import './ChatArea.css';
+
+/** Same tokenization as renderMessageContent (URLs, mentions, emoji). */
+const MESSAGE_PART_SPLIT = /(<:[a-zA-Z0-9_]+:[a-zA-Z0-9]+>|:[a-zA-Z0-9_]+:|<@&[a-zA-Z0-9]+>|<@[a-zA-Z0-9]+>|@everyone|@[a-zA-Z0-9_. -]+(?=[^a-zA-Z0-9_. -]|$)|https?:\/\/\S+)/g;
+
+/** Sort key for message ordering (oldest → newest in list). */
+function messageSortTime(m) {
+  if (m?.created_at) {
+    const t = new Date(m.created_at).getTime();
+    if (!Number.isNaN(t)) return t;
+  }
+  const id = String(m?._id || '');
+  if (id.startsWith('__opt__')) return Date.now();
+  if (id.length >= 8) {
+    const t = parseInt(id.slice(0, 8), 16) * 1000;
+    if (!Number.isNaN(t)) return t;
+  }
+  return 0;
+}
+
+/**
+ * Merge full server message list from fetch/poll with any optimistic rows not yet on the server.
+ * Use only when `serverMessages` is the complete list (e.g. GET /messages), not a single new event.
+ */
+function mergeMessagesWithPendingOptimistic(prev, serverMessages) {
+  const server = Array.isArray(serverMessages) ? serverMessages : [];
+  const serverIds = new Set(server.map((m) => m._id));
+  const pending = (prev || []).filter((m) => m._optimistic && !serverIds.has(m._id));
+  if (pending.length === 0) return server;
+  const combined = [...server, ...pending];
+  combined.sort((a, b) => messageSortTime(a) - messageSortTime(b));
+  return combined;
+}
 
 function isEmojiOnly(content) {
   if (!content) return false;
@@ -83,6 +118,21 @@ function isDirectMediaUrl(url) {
     || /media\.tenor\.com/i.test(url);
 }
 
+function hasVisibleMessageText(content, linkPreviews) {
+  if (!content) return false;
+  const parts = content.split(MESSAGE_PART_SPLIT);
+  for (const part of parts) {
+    if (!part) continue;
+    if (/^https?:\/\/\S+$/i.test(part)) {
+      if (isDirectMediaUrl(part)) return true;
+      if (!shouldHideOfeedUrlInMessage(part, linkPreviews)) return true;
+      continue;
+    }
+    if (part.trim()) return true;
+  }
+  return false;
+}
+
 function decodeHtml(value) {
   return String(value ?? '')
     .replace(/&amp;/g, '&')
@@ -100,6 +150,9 @@ function renderLinkPreviews(linkPreviews) {
     <div className="msg-link-previews">
       {visiblePreviews.map((preview, i) => {
         if (!preview?.url) return null;
+        if (parseOfeedShareUrl(preview.url)) {
+          return <OfeedShareLinkCard key={`ofeed-${preview.url}-${i}`} url={preview.url} />;
+        }
         const { url, title, description, image, site_name } = preview;
         return (
           <a
@@ -147,11 +200,11 @@ function isBotUser(userObj) {
   return typeof owner === 'string' && owner.trim().length > 0;
 }
 
-function renderMessageContent(content, customEmojiMap, user, mentionDirectory, onMentionClick, roleDirectory, setLightboxSrc) {
+function renderMessageContent(content, customEmojiMap, user, mentionDirectory, onMentionClick, roleDirectory, setLightboxSrc, linkPreviews) {
   if (!content) return null;
   const jumbo = isEmojiOnly(content);
   const cls = jumbo ? 'emoji-jumbo' : '';
-  const parts = content.split(/(<:[a-zA-Z0-9_]+:[a-zA-Z0-9]+>|:[a-zA-Z0-9_]+:|<@&[a-zA-Z0-9]+>|<@[a-zA-Z0-9]+>|@everyone|@[a-zA-Z0-9_. -]+(?=[^a-zA-Z0-9_. -]|$)|https?:\/\/\S+)/g);
+  const parts = content.split(MESSAGE_PART_SPLIT);
   const elements = parts.map((part, i) => {
     const customMatch = part.match(/^<:([a-zA-Z0-9_]+):([a-zA-Z0-9]+)>$/);
     if (customMatch) {
@@ -169,6 +222,9 @@ function renderMessageContent(content, customEmojiMap, user, mentionDirectory, o
     if (/^https?:\/\/\S+$/i.test(part)) {
       if (isDirectMediaUrl(part)) {
         return <img key={i} src={part} alt="gif" className="inline-gif" onClick={() => setLightboxSrc?.(part)} />;
+      }
+      if (shouldHideOfeedUrlInMessage(part, linkPreviews)) {
+        return null;
       }
       return <a key={i} href={part} target="_blank" rel="noreferrer">{part}</a>;
     }
@@ -240,12 +296,13 @@ function renderMessageContent(content, customEmojiMap, user, mentionDirectory, o
 const TYPING_SEND_INTERVAL_MS = 2000;
 const TYPING_STOP_DELAY_MS = 3000;
 
-export default function ChatArea({ channelId, serverRoles }) {
+export default function ChatArea({ channelId, serverRoles, onChannelAccessLost }) {
   const { user } = useAuth();
   const { send, on } = useWS();
   const { isMobile, openChannelSidebar, openMemberSidebar } = useMobile();
   const { ackChannel } = useUnread();
   const { setActiveChannel } = useNotifications();
+  const ofeed = useOfeed();
 
   useEffect(() => {
     setActiveChannel?.(channelId);
@@ -269,7 +326,8 @@ export default function ChatArea({ channelId, serverRoles }) {
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [pendingFiles, setPendingFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
-  const [perms, setPerms] = useState(ALL_PERMISSIONS);
+  /** Loaded from GET /channels/:id/permissions; 0 until then (avoid assuming full access). DMs use ALL_PERMISSIONS after fetch. */
+  const [perms, setPerms] = useState(0);
   const [customEmojis, setCustomEmojis] = useState({});
   const [mentionDirectory, setMentionDirectory] = useState({ byName: {}, byId: {} });
   const [roleDirectory, setRoleDirectory] = useState({ byName: {}, byId: {} });
@@ -283,6 +341,11 @@ export default function ChatArea({ channelId, serverRoles }) {
   const [openThread, setOpenThread] = useState(null);
   const bottomRef = useRef(null);
   const pollRef = useRef(null);
+  /** Ignore HTTP results if user switched channel before the request finished. */
+  const channelIdRef = useRef(channelId);
+  channelIdRef.current = channelId;
+  const onChannelAccessLostRef = useRef(onChannelAccessLost);
+  onChannelAccessLostRef.current = onChannelAccessLost;
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
@@ -310,22 +373,44 @@ export default function ChatArea({ channelId, serverRoles }) {
 
   const fetchMessages = useCallback(async () => {
     if (!channelId) return;
+    const cid = channelId;
+    let ch;
+    let msgs;
     try {
-      const ch = await get(`/channels/${channelId}`);
+      const results = await Promise.all([
+        get(`/channels/${cid}`),
+        get(`/channels/${cid}/messages?limit=50`).catch(() => []),
+      ]);
+      ch = results[0];
+      msgs = results[1];
+    } catch (err) {
+      if (channelIdRef.current !== cid) return;
+      if (err?.type === 'Forbidden') {
+        setChannel(null);
+        setPerms(0);
+        setMessages([]);
+        onChannelAccessLostRef.current?.();
+      }
+      setLoading(false);
+      return;
+    }
+    if (channelIdRef.current !== cid) return;
+    try {
       setChannel(ch);
+      setMessages((prev) => mergeMessagesWithPendingOptimistic(prev, msgs));
+      setLoading(false);
       if (ch.server) {
         try {
-          const p = await get(`/channels/${channelId}/permissions`);
-          setPerms(p?.permissions ?? 0);
-        } catch { setPerms(0); }
-        try {
-          const emojis = await get(`/servers/${ch.server}/emojis`);
+          const [p, emojis, members] = await Promise.all([
+            get(`/channels/${cid}/permissions`).catch(() => ({})),
+            get(`/servers/${ch.server}/emojis`).catch(() => []),
+            get(`/servers/${ch.server}/members`).catch(() => []),
+          ]);
+          if (channelIdRef.current !== cid) return;
+          setPerms(typeof p?.permissions === 'number' ? p.permissions : 0);
           const map = {};
           for (const e of (emojis || [])) map[e._id] = e;
           setCustomEmojis(map);
-        } catch {}
-        try {
-          const members = await get(`/servers/${ch.server}/members`);
           const byName = {};
           const byId = {};
           for (const m of (members || [])) {
@@ -341,31 +426,34 @@ export default function ChatArea({ channelId, serverRoles }) {
           }
           setMentionDirectory({ byName, byId });
         } catch {
+          if (channelIdRef.current !== cid) return;
+          setPerms(0);
           setMentionDirectory({ byName: {}, byId: {} });
         }
       } else {
+        if (channelIdRef.current !== cid) return;
         setPerms(ALL_PERMISSIONS);
         setMentionDirectory({ byName: {}, byId: {} });
       }
-      const msgs = await get(`/channels/${channelId}/messages?limit=50`);
-      setMessages(msgs || []);
     } catch {}
-    setLoading(false);
   }, [channelId]);
 
+  const fetchMessagesRef = useRef(fetchMessages);
+  fetchMessagesRef.current = fetchMessages;
+
   useEffect(() => {
+    if (!channelId) return;
     setLoading(true);
     setMessages([]);
     setShowSearch(false);
     setShowPinned(false);
     setAutocomplete(null);
     setMentionCard(null);
-    fetchMessages();
-    // Poll less frequently (10s) to reduce server load and battery; WS still delivers new messages in real time
+    fetchMessagesRef.current();
     const pollIntervalMs = 10000;
-    pollRef.current = setInterval(fetchMessages, pollIntervalMs);
+    pollRef.current = setInterval(() => fetchMessagesRef.current(), pollIntervalMs);
     return () => clearInterval(pollRef.current);
-  }, [fetchMessages]);
+  }, [channelId]);
 
   useEffect(() => {
     if (channelId && !loading && ackChannel) ackChannel(channelId);
@@ -389,6 +477,47 @@ export default function ChatArea({ channelId, serverRoles }) {
     });
     return () => { unsubStart(); unsubStop(); };
   }, [channelId, user ? user._id : null, on]);
+
+  useEffect(() => {
+    if (!channelId || !on) return;
+    const sameChan = (ch) => ch != null && String(ch) === String(channelId);
+
+    const unsubCreate = on('MESSAGE_CREATE', (d) => {
+      if (!d || !sameChan(d.channel)) return;
+      setMessages((prev) => {
+        if (prev.some((m) => m._id === d._id)) return prev;
+        const authorId = typeof d.author === 'object' ? d.author?._id : d.author;
+        const me = user?._id;
+        let base = prev;
+        if (authorId != null && me != null && String(authorId) === String(me)) {
+          base = prev.filter((m) => !(m._optimistic && m.author && String(m.author._id) === String(me)));
+        }
+        // Do not use mergeMessagesWithPendingOptimistic here — that helper expects a *full* server
+        // list; with a single message and no other pending rows it would replace the whole chat.
+        const next = [...base, d];
+        next.sort((a, b) => messageSortTime(a) - messageSortTime(b));
+        return next;
+      });
+    });
+
+    const unsubUpdate = on('MESSAGE_UPDATE', (d) => {
+      if (!d || !sameChan(d.channel)) return;
+      setMessages((prev) => prev.map((m) => (m._id === d._id ? { ...m, ...d } : m)));
+    });
+
+    const unsubDelete = on('MESSAGE_DELETE', (payload) => {
+      const id = payload?._id ?? payload?.id;
+      const ch = payload?.channel;
+      if (!id || !sameChan(ch)) return;
+      setMessages((prev) => prev.filter((m) => m._id !== id));
+    });
+
+    return () => {
+      unsubCreate();
+      unsubUpdate();
+      unsubDelete();
+    };
+  }, [channelId, on, user?._id]);
 
   useEffect(() => {
     return () => { setTypingUserIds(new Set()); };
@@ -444,38 +573,89 @@ export default function ChatArea({ channelId, serverRoles }) {
 
   // Autocomplete logic (emoji :query and @mention)
   useEffect(() => {
-    // Check for @mention autocomplete
+    // Check for @mention autocomplete (query runs until whitespace; match display name / username / nickname by prefix)
     const atIdx = input.lastIndexOf('@');
-    if (atIdx >= 0 && atIdx < input.length - 0) {
+    if (atIdx >= 0) {
       const beforeAt = input[atIdx - 1];
       if (atIdx === 0 || beforeAt === ' ' || beforeAt === undefined) {
-        const query = input.slice(atIdx + 1).toLowerCase();
-        if (query.length >= 0 && !/\n/.test(query)) {
+        const tail = input.slice(atIdx + 1);
+        const spaceIdx = tail.search(/[\s\n]/);
+        const rawQuery = spaceIdx === -1 ? tail : tail.slice(0, spaceIdx);
+        if (!/\n/.test(rawQuery)) {
+          const query = rawQuery.toLowerCase();
+          const replaceEnd = atIdx + 1 + rawQuery.length;
           const items = [];
-          // @everyone
-          if ('everyone'.startsWith(query)) {
+          if (query.length === 0 || 'everyone'.startsWith(query)) {
             items.push({ type: 'everyone', name: 'everyone', label: '@everyone — Notify all members' });
           }
-          // Roles
+          const roleMatches = [];
           for (const [id, role] of Object.entries(roleDirectory?.byId || {})) {
-            if (role.name.toLowerCase().includes(query)) {
-              items.push({ type: 'role', id, name: role.name, colour: role.colour || null });
+            if (!role?.name) continue;
+            const rn = role.name.toLowerCase();
+            if (query.length === 0 || rn.startsWith(query)) {
+              roleMatches.push({ type: 'role', id, name: role.name, colour: role.colour || null, sortKey: rn });
             }
           }
-          // Users
+          roleMatches.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+          items.push(...roleMatches.map(({ sortKey: _sk, ...r }) => r));
+
+          const userItems = [];
           for (const m of Object.values(mentionDirectory?.byId || {})) {
             const u = typeof m.user === 'object' ? m.user : null;
             if (!u) continue;
-            const displayName = m.nickname || u.display_name || u.username || '';
-            const username = u.username || '';
-            if (displayName.toLowerCase().includes(query) || username.toLowerCase().includes(query)) {
-              if (!items.find(it => it.type === 'user' && it.id === u._id)) {
-                items.push({ type: 'user', id: u._id, name: displayName, username, avatar: u.avatar });
-              }
+            const nick = (m.nickname || '').toLowerCase();
+            const displayName = (u.display_name || '').toLowerCase();
+            const username = (u.username || '').toLowerCase();
+            const label = m.nickname || u.display_name || u.username || '';
+            const sortKey = (label || u.username || '').toLowerCase();
+            const matches =
+              query.length === 0
+              || nick.startsWith(query)
+              || displayName.startsWith(query)
+              || username.startsWith(query);
+            if (!matches) continue;
+            if (!userItems.find((it) => it.id === u._id)) {
+              userItems.push({
+                type: 'user',
+                id: u._id,
+                name: label || '?',
+                username: u.username || '',
+                avatar: u.avatar,
+                sortKey,
+              });
             }
           }
-          if (items.length > 0) {
-            setAutocomplete({ items: items.slice(0, 10), colonIdx: atIdx, mode: 'mention' });
+          userItems.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+          if (channel?.channel_type === 'DirectMessage' && channel?.other_user) {
+            const ou = channel.other_user;
+            const un = (ou.username || '').toLowerCase();
+            const dn = (ou.display_name || ou.username || '').toLowerCase();
+            const matches = query.length === 0 || dn.startsWith(query) || un.startsWith(query);
+            if (matches && !userItems.find((it) => it.id === ou._id)) {
+              userItems.push({
+                type: 'user',
+                id: ou._id,
+                name: ou.display_name || ou.username || '?',
+                username: ou.username || '',
+                avatar: ou.avatar,
+                sortKey: (ou.display_name || ou.username || '').toLowerCase(),
+              });
+              userItems.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+            }
+          }
+
+          items.push(...userItems.map(({ sortKey: _sk, ...u }) => u));
+
+          const MENTION_LIST_CAP = 50;
+          const limited = items.slice(0, MENTION_LIST_CAP);
+          if (limited.length > 0) {
+            setAutocomplete({
+              items: limited,
+              colonIdx: atIdx,
+              mode: 'mention',
+              replaceEnd,
+            });
             setAcSelected(0);
             return;
           }
@@ -506,7 +686,7 @@ export default function ChatArea({ channelId, serverRoles }) {
       }
     }
     setAutocomplete(null);
-  }, [input, customEmojis, mentionDirectory, roleDirectory]);
+  }, [input, customEmojis, mentionDirectory, roleDirectory, channel]);
 
   const applyAutocomplete = (item) => {
     if (!autocomplete) return;
@@ -525,7 +705,13 @@ export default function ChatArea({ channelId, serverRoles }) {
     } else {
       insert = item.name || '';
     }
-    setInput(before + insert + ' ');
+    if (autocomplete.mode === 'mention' && autocomplete.replaceEnd != null) {
+      const after = input.slice(autocomplete.replaceEnd);
+      const gap = after.length > 0 && !/^\s/.test(after) ? ' ' : '';
+      setInput(before + insert + gap + after);
+    } else {
+      setInput(before + insert + ' ');
+    }
     setAutocomplete(null);
     inputRef.current?.focus();
   };
@@ -542,25 +728,64 @@ export default function ChatArea({ channelId, serverRoles }) {
     e.preventDefault();
     if (!input.trim() && pendingFiles.length === 0) return;
     sendTypingStop();
+    const contentSnapshot = input || '';
+    const filesSnapshot = [...pendingFiles];
+    const replySnap = replyingTo ? { ...replyingTo } : null;
+    let optimisticId = null;
+
     setUploading(true);
     try {
-      let attachments = [];
-      for (const file of pendingFiles) {
-        const uploaded = await uploadFile(file);
-        attachments.push(uploaded);
+      const attachments = [];
+      for (const file of filesSnapshot) {
+        attachments.push(await uploadFile(file));
       }
-      const body = { content: input || '' };
+      const body = { content: contentSnapshot };
       if (attachments.length > 0) body.attachments = attachments;
-      if (replyingTo) body.replies = [replyingTo._id];
-      const msg = await post(`/channels/${channelId}/messages`, body);
-      setMessages((prev) => [...prev, msg]);
+      if (replySnap) body.replies = [replySnap._id];
+
+      optimisticId = `__opt__${crypto.randomUUID()}`;
+      const optimisticMsg = {
+        _id: optimisticId,
+        channel: channelId,
+        author: user,
+        content: contentSnapshot,
+        attachments,
+        created_at: new Date().toISOString(),
+        replies: replySnap ? [replySnap._id] : [],
+        reply_context: replySnap
+          ? [{
+            _id: replySnap._id,
+            author: { display_name: replySnap.author, username: replySnap.author },
+            content: replySnap.content,
+          }]
+          : [],
+        _optimistic: true,
+      };
+      setMessages((prev) => [...prev, optimisticMsg]);
       setInput('');
       setPendingFiles([]);
       setReplyingTo(null);
-      // If slowmode, start cooldown
+      setUploading(false);
+
+      const msg = await post(`/channels/${channelId}/messages`, body);
+      setMessages((prev) => {
+        if (prev.some((m) => m._id === msg._id)) {
+          return prev.filter((m) => m._id !== optimisticId);
+        }
+        if (prev.some((m) => m._id === optimisticId)) {
+          return prev.map((m) => (m._id === optimisticId ? msg : m));
+        }
+        return [...prev, msg];
+      });
       if (channel?.slowmode > 0) setSlowmodeCooldown(channel.slowmode);
     } catch (err) {
+      if (optimisticId) {
+        setMessages((prev) => prev.filter((m) => m._id !== optimisticId));
+      }
       if (err?.retry_after) setSlowmodeCooldown(err.retry_after);
+      setInput(contentSnapshot);
+      if (filesSnapshot.length > 0) setPendingFiles(filesSnapshot);
+      if (replySnap) setReplyingTo(replySnap);
     }
     focusInputAfterSendRef.current = true;
     setUploading(false);
@@ -640,6 +865,7 @@ export default function ChatArea({ channelId, serverRoles }) {
 
   const handleContextMenu = (e, msg) => {
     e.preventDefault();
+    if (msg._optimistic) return;
     const authorId = typeof msg.author === 'object' ? msg.author?._id : msg.author;
     setContextMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 250), msg, isOwn: authorId === user?._id });
   };
@@ -735,11 +961,30 @@ export default function ChatArea({ channelId, serverRoles }) {
       inputRef.current?.focus();
       return;
     }
-    try {
-      const msg = await post(`/channels/${channelId}/messages`, { content: gif.url });
-      setMessages((prev) => [...prev, msg]);
-    } catch {}
+    const optimisticId = `__opt__${crypto.randomUUID()}`;
     setShowGifPicker(false);
+    try {
+      setMessages((prev) => [...prev, {
+        _id: optimisticId,
+        channel: channelId,
+        author: user,
+        content: gif.url,
+        created_at: new Date().toISOString(),
+        _optimistic: true,
+      }]);
+      const msg = await post(`/channels/${channelId}/messages`, { content: gif.url });
+      setMessages((prev) => {
+        if (prev.some((m) => m._id === msg._id)) {
+          return prev.filter((m) => m._id !== optimisticId);
+        }
+        if (prev.some((m) => m._id === optimisticId)) {
+          return prev.map((m) => (m._id === optimisticId ? msg : m));
+        }
+        return [...prev, msg];
+      });
+    } catch {
+      setMessages((prev) => prev.filter((m) => m._id !== optimisticId));
+    }
     inputRef.current?.focus();
   };
 
@@ -785,7 +1030,7 @@ export default function ChatArea({ channelId, serverRoles }) {
     ? (channel.other_user.display_name || channel.other_user.username || 'Direct Message')
     : (channel?.name || 'Channel');
 
-  if (loading) {
+  if (loading && messages.length === 0) {
     return (
       <div className="chat-area">
         <div className="chat-header">
@@ -851,6 +1096,16 @@ export default function ChatArea({ channelId, serverRoles }) {
           <button className="chat-header-btn" onClick={() => { setShowSearch(!showSearch); setShowPinned(false); }} title="Search">
             <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
           </button>
+          <button
+            type="button"
+            className={`chat-header-btn ${ofeed?.open ? 'chat-header-btn--ofeed-active' : ''}`}
+            onClick={() => ofeed?.toggle?.()}
+            title="Ofeed — mini feed"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
+              <path fill="currentColor" d="M4 4h16v2H4V4zm0 5h10v2H4V9zm0 5h16v2H4v-2zm0 5h10v2H4v-2z"/>
+            </svg>
+          </button>
           {isMobile && channel?.server && (
             <button className="mobile-drawer-btn" onClick={openMemberSidebar} aria-label="Open members">
               <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
@@ -905,7 +1160,7 @@ export default function ChatArea({ channelId, serverRoles }) {
           const showHeader = shouldShowHeader(msg, idx);
           const isEditing = editingMsg === msg._id;
           return (
-            <div key={msg._id} id={`msg-${msg._id}`} className={`message ${showHeader ? 'with-header' : 'compact'} ${isEditing ? 'editing' : ''} ${msg.pinned ? 'pinned' : ''} ${msg.reply_context && msg.replies?.length ? 'has-reply' : ''}`} onContextMenu={(e) => handleContextMenu(e, msg)}>
+            <div key={msg._id} id={`msg-${msg._id}`} className={`message ${showHeader ? 'with-header' : 'compact'} ${isEditing ? 'editing' : ''} ${msg.pinned ? 'pinned' : ''} ${msg.reply_context && msg.replies?.length ? 'has-reply' : ''} ${msg._optimistic ? 'msg-optimistic' : ''}`} onContextMenu={(e) => handleContextMenu(e, msg)}>
               {renderReplyContext(msg)}
               {showHeader && (
                 <div
@@ -951,7 +1206,11 @@ export default function ChatArea({ channelId, serverRoles }) {
                   </div>
                 ) : (
                   <>
-                    {msg.content && <div className={`msg-text ${isEmojiOnly(msg.content) ? 'emoji-jumbo-text' : ''}`}>{renderMessageContent(msg.content, customEmojis, user, mentionDirectory, openMentionCard, roleDirectory, setLightboxSrc)}</div>}
+                    {msg.content && hasVisibleMessageText(msg.content, msg.link_previews) && (
+                      <div className={`msg-text ${isEmojiOnly(msg.content) ? 'emoji-jumbo-text' : ''}`}>
+                        {renderMessageContent(msg.content, customEmojis, user, mentionDirectory, openMentionCard, roleDirectory, setLightboxSrc, msg.link_previews)}
+                      </div>
+                    )}
                     {renderMessageEmbeds(msg.embeds)}
                     {renderLinkPreviews(msg.link_previews)}
                     {msg.attachments && msg.attachments.length > 0 && (
@@ -995,7 +1254,7 @@ export default function ChatArea({ channelId, serverRoles }) {
                   </div>
                 )}
               </div>
-              {!isEditing && (
+              {!isEditing && !msg._optimistic && (
                 <div className="msg-action-bar" onClick={(e) => e.stopPropagation()}>
                   {canReact && (
                     <button className="msg-action-btn" title="Add Reaction" onClick={() => setShowEmojiPicker(showEmojiPicker === msg._id ? null : msg._id)}>
@@ -1106,10 +1365,21 @@ export default function ChatArea({ channelId, serverRoles }) {
               ))}
             </div>
           )}
-          {autocomplete && (
-            <div className="autocomplete-popup">
-              {autocomplete.items.map((item, i) => (
-                <div key={i} className={`ac-item ${i === acSelected ? 'selected' : ''}`} onMouseDown={(e) => { e.preventDefault(); applyAutocomplete(item); }}>
+          <div className="chat-input-composer">
+            {autocomplete && (
+              <div
+                className={`autocomplete-popup${autocomplete.mode === 'mention' ? ' autocomplete-popup-mention' : ''}`}
+                role="listbox"
+                aria-label={autocomplete.mode === 'mention' ? 'Mention users and roles' : 'Emoji suggestions'}
+              >
+                {autocomplete.items.map((item, i) => (
+                  <div
+                    key={item.type === 'user' ? `u-${item.id}` : item.type === 'role' ? `r-${item.id}` : `${item.type}-${i}`}
+                    role="option"
+                    aria-selected={i === acSelected}
+                    className={`ac-item ${i === acSelected ? 'selected' : ''}`}
+                    onMouseDown={(e) => { e.preventDefault(); applyAutocomplete(item); }}
+                  >
                   {item.type === 'unicode' ? (
                     <><span className="ac-emoji">{item.e}</span><span className="ac-name">:{item.n || item.name}:</span></>
                   ) : item.type === 'custom' ? (
@@ -1126,12 +1396,12 @@ export default function ChatArea({ channelId, serverRoles }) {
                   ) : (
                     <span className="ac-name">{item.name}</span>
                   )}
-                </div>
-              ))}
-            </div>
-          )}
-          <FormattingToolbar inputRef={inputRef} value={input} onChange={setInput} />
-          <div className="chat-input-wrap">
+                  </div>
+                ))}
+              </div>
+            )}
+            <FormattingToolbar inputRef={inputRef} value={input} onChange={setInput} />
+            <div className="chat-input-wrap">
             {canAttach && (
               <button type="button" className="chat-attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach file">
                 <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>
@@ -1170,6 +1440,7 @@ export default function ChatArea({ channelId, serverRoles }) {
               </button>
             )}
           </div>
+          </div>
           {showInputEmoji && (
             <div className="input-emoji-wrap" onClick={(e) => e.stopPropagation()}>
               <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowInputEmoji(false)} serverId={channel?.server} />
@@ -1183,7 +1454,7 @@ export default function ChatArea({ channelId, serverRoles }) {
         </form>
       ) : (
         <div className="chat-input-area chat-no-send chat-input-locked">
-          <div className="chat-no-send-text">This channel is locked. You cannot send messages here.</div>
+          <div className="chat-no-send-text">You don&apos;t have permission to send messages here.</div>
         </div>
       )}
       {lightboxSrc && <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}

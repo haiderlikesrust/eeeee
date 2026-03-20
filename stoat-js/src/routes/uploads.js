@@ -4,11 +4,14 @@ import path from 'path';
 import fs from 'fs';
 import { ulid } from 'ulid';
 import { authMiddleware } from '../middleware/auth.js';
+import config from '../../config.js';
 
 const router = Router();
 
-const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const useS3 = config.uploadStorage === 's3' && config.s3.bucket && config.s3.region && config.s3.publicBaseUrl;
+
+const UPLOAD_DIR = config.uploadDir;
+if (!useS3 && !fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const MIME_MAP = {
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
@@ -18,7 +21,7 @@ const MIME_MAP = {
   '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.md': 'text/markdown',
 };
 
-const storage = multer.diskStorage({
+const diskStorage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => {
     const id = ulid();
@@ -28,16 +31,61 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({
-  storage,
+  storage: useS3 ? multer.memoryStorage() : diskStorage,
   limits: { fileSize: 20 * 1024 * 1024 },
 });
 
+async function putS3Object(key, body, contentType) {
+  const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
+  const client = new S3Client({
+    region: config.s3.region,
+    credentials: config.s3.accessKeyId && config.s3.secretAccessKey
+      ? { accessKeyId: config.s3.accessKeyId, secretAccessKey: config.s3.secretAccessKey }
+      : undefined,
+  });
+  await client.send(new PutObjectCommand({
+    Bucket: config.s3.bucket,
+    Key: key,
+    Body: body,
+    ContentType: contentType,
+  }));
+}
+
 // POST /attachments - upload a file, returns file metadata
-router.post('/', authMiddleware(), upload.single('file'), (req, res) => {
+router.post('/', authMiddleware(), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ type: 'InvalidBody', error: 'No file provided' });
 
   const file = req.file;
-  const id = path.basename(file.filename, path.extname(file.filename));
+
+  if (useS3) {
+    const ext = path.extname(file.originalname || '') || '';
+    const finalId = ulid();
+    const key = `attachments/${finalId}${ext}`;
+    try {
+      await putS3Object(key, file.buffer, file.mimetype);
+    } catch (e) {
+      return res.status(500).json({ type: 'UploadError', error: e.message || 'S3 upload failed' });
+    }
+    const publicUrl = `${config.s3.publicBaseUrl}/${key}`;
+    const metadata = {
+      type: file.mimetype.startsWith('image/') ? 'Image' : file.mimetype.startsWith('video/') ? 'Video' : file.mimetype.startsWith('audio/') ? 'Audio' : 'File',
+    };
+    if (file.mimetype.startsWith('image/')) {
+      metadata.width = 0;
+      metadata.height = 0;
+    }
+    return res.json({
+      _id: finalId,
+      tag: 'attachments',
+      filename: file.originalname,
+      content_type: file.mimetype,
+      size: file.size,
+      metadata,
+      url: publicUrl,
+    });
+  }
+
+  const idLocal = path.basename(file.filename, path.extname(file.filename));
 
   const metadata = {
     type: file.mimetype.startsWith('image/') ? 'Image' : file.mimetype.startsWith('video/') ? 'Video' : file.mimetype.startsWith('audio/') ? 'Audio' : 'File',
@@ -49,7 +97,7 @@ router.post('/', authMiddleware(), upload.single('file'), (req, res) => {
   }
 
   const result = {
-    _id: id,
+    _id: idLocal,
     tag: 'attachments',
     filename: file.originalname,
     content_type: file.mimetype,
@@ -72,19 +120,25 @@ function serveFile(filePath, originalFilename, res) {
   return res.sendFile(filePath);
 }
 
-// GET /attachments/:filename - serve the file
+// GET /attachments/:filename - serve the file (local) or redirect to public URL (S3)
 router.get('/:filename', (req, res) => {
   const filename = req.params.filename;
+
+  if (useS3) {
+    const key = filename.includes('/') ? filename : `attachments/${filename}`;
+    const url = `${config.s3.publicBaseUrl}/${key}`;
+    return res.redirect(302, url);
+  }
+
   const filePath = path.join(UPLOAD_DIR, filename);
 
   if (fs.existsSync(filePath)) {
     return serveFile(filePath, filename, res);
   }
 
-  // If no extension, try to find a file that starts with this ID
   if (!path.extname(filename)) {
     const files = fs.readdirSync(UPLOAD_DIR);
-    const match = files.find((f) => f.startsWith(filename + '.') || f === filename);
+    const match = files.find((f) => f.startsWith(`${filename}.`) || f === filename);
     if (match) {
       return serveFile(path.join(UPLOAD_DIR, match), match, res);
     }

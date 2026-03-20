@@ -16,3 +16,4 @@ export { default as Emoji } from './Emoji.js';
 export { default as PushSubscription } from './PushSubscription.js';
 export { default as GlobalBadge } from './GlobalBadge.js';
 export { default as AuditLog } from './AuditLog.js';
+export { default as OfeedPost } from './OfeedPost.js';
