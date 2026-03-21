@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { get, patch, post, uploadFile } from '../api';
+import { del, get, patch, post, uploadFile } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
@@ -324,9 +324,40 @@ function BotCard({
   );
 }
 
+const NODE_PRESENCE_SNIPPET = `// Node: show while running, hide when process exits (no heartbeat)
+const TOKEN = process.env.STOAT_PRESENCE_TOKEN;
+const base = process.env.STOAT_API || 'http://localhost:14702';
+const headers = { Authorization: \`Bearer \${TOKEN}\`, 'Content-Type': 'application/json' };
+await fetch(\`\${base}/public/v1/presence\`, {
+  method: 'PATCH',
+  headers,
+  body: JSON.stringify({
+    activity: { type: 'Playing', name: 'My App' },
+    ttl_seconds: 60,
+    presence: 'Online',
+  }),
+});
+const t = setInterval(() => {
+  fetch(\`\${base}/public/v1/presence\`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ heartbeat: true, ttl_seconds: 60 }),
+  });
+}, 30_000);
+process.on('SIGINT', async () => {
+  clearInterval(t);
+  await fetch(\`\${base}/public/v1/presence\`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ activity: null }),
+  });
+  process.exit(0);
+});`;
+
 export default function DeveloperPortalPage() {
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
   const toast = useToast();
+  const [presenceTokenReveal, setPresenceTokenReveal] = useState('');
   const [bots, setBots] = useState([]);
   const [servers, setServers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -391,7 +422,7 @@ export default function DeveloperPortalPage() {
         <header className="dev-portal-header">
           <div>
             <h1>Developer Portal</h1>
-            <p>Create bots, configure intents, install into servers, and test with the SDK.</p>
+            <p>Create bots, configure intents, use the rich presence API for your account, install into servers, and test with the SDK.</p>
             <p style={{ marginTop: 6 }}>
               <Link to="/developer/editor" className="dev-link-btn" style={{ marginRight: 8 }}>No-Code Bot Builder</Link>
             </p>
@@ -446,6 +477,79 @@ export default function DeveloperPortalPage() {
               ))}
             </div>
           )}
+        </section>
+
+        <section className="dev-panel dev-presence-panel">
+          <h2>Rich presence API</h2>
+          <p>
+            Playing / listening / streaming activity for <strong>your user account</strong> is set only via HTTP (scripts, desktop apps, etc.).
+            Custom status and presence mode from User Settings still apply; this API adds activity and optional lease-based online presence.
+          </p>
+          <p>
+            {user?.presence_api_token_configured
+              ? 'A secret token is active on your account.'
+              : 'No token yet — create one to enable the API.'}
+          </p>
+          {presenceTokenReveal ? (
+            <label className="dev-presence-token-field">
+              <span>New token (copy now)</span>
+              <input readOnly value={presenceTokenReveal} onFocus={(e) => e.target.select()} />
+            </label>
+          ) : null}
+          <div className="dev-actions dev-presence-actions">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const data = await post('/users/@me/presence-token');
+                  if (data?.token) {
+                    setPresenceTokenReveal(data.token);
+                    setUser((prev) => (prev ? { ...prev, presence_api_token_configured: true } : prev));
+                    toast.success('Token issued — copy it now');
+                  }
+                } catch (err) {
+                  toast.error(err?.error || err?.message || 'Failed to create token');
+                }
+              }}
+            >
+              Create / rotate token
+            </button>
+            <button
+              type="button"
+              disabled={!user?.presence_api_token_configured}
+              onClick={async () => {
+                try {
+                  const u = await del('/users/@me/presence-token');
+                  setPresenceTokenReveal('');
+                  if (u) setUser((prev) => (prev ? { ...prev, ...u } : prev));
+                  toast.success('Token revoked');
+                } catch (err) {
+                  toast.error(err?.error || err?.message || 'Failed to revoke');
+                }
+              }}
+            >
+              Revoke token
+            </button>
+          </div>
+          <p>
+            Activity uses a time lease (default <code>ttl_seconds: 120</code>). While your script keeps sending updates or{' '}
+            <code>heartbeat: true</code> before the lease ends, presence stays; when the script stops, it clears automatically.
+          </p>
+          <p>
+            Elapsed time (e.g. “for 12m”) is computed from <code>started_at</code> (set when the session starts; changing name/details/state starts a new session).
+            Optional <code>activity.image</code>: an <code>https://</code> URL or an attachment object from <code>POST /attachments</code> (same shape as avatar uploads).
+          </p>
+          <p>While the lease is active, you count as online in member lists even if no browser tab is connected.</p>
+          <pre className="dev-code">{NODE_PRESENCE_SNIPPET}</pre>
+          <pre className="dev-code">
+            {`curl -X PATCH "${typeof window !== 'undefined' ? window.location.origin : ''}/api/public/v1/presence" \\
+  -H "Authorization: Bearer YOUR_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"activity":{"type":"Playing","name":"My Game"},"ttl_seconds":120}'`}
+          </pre>
+          <p>
+            Clear immediately: <code>{'{"activity":null}'}</code>. Optional <code>presence</code> (Online, Idle, Busy, Invisible).
+          </p>
         </section>
 
         <section className="dev-panel">

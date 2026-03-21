@@ -216,7 +216,13 @@ export default function ProfileCard({
             <div className="profile-card-links">
               {links.map((l, i) => (
                 <a key={`${l.url}-${i}`} href={l.url} target="_blank" rel="noreferrer" className="profile-card-link">
-                  {l.label || 'Link'}
+                  <span className="profile-card-link-label">{l.label || 'Link'}</span>
+                  <svg className="profile-card-link-icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M19 19H5V5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"
+                    />
+                  </svg>
                 </a>
               ))}
             </div>

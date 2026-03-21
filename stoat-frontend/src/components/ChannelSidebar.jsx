@@ -43,7 +43,17 @@ function VoiceChannelTimer({ startTime }) {
   );
 }
 
-function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreated, onServerUpdated, onServerDeleted }) {
+function ChannelSidebar({
+  type,
+  server,
+  channels,
+  serverId,
+  serverChannelsLoading = false,
+  dms,
+  onChannelCreated,
+  onServerUpdated,
+  onServerDeleted,
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
@@ -89,7 +99,9 @@ function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreate
   }, [serverId, type]);
 
   if (type === 'home') {
-    const isFriends = location.pathname === '/channels/@me';
+    const path = location.pathname.replace(/\/$/, '') || '/';
+    const isMeHome = path === '/channels/@me';
+    const isFriends = path === '/channels/@me/friends';
     return (
       <div className="channel-sidebar" role={isDrawerOpen ? 'dialog' : undefined} aria-modal={isDrawerOpen ? 'true' : undefined} aria-label={isDrawerOpen ? 'Navigation' : undefined}>
         <div className="sidebar-header">
@@ -97,8 +109,17 @@ function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreate
         </div>
         <div className="sidebar-channels">
           <div
-            className={`channel-item ${isFriends ? 'active' : ''} ${((user?.relations || []).filter((r) => r.status === 'Incoming').length > 0) ? 'has-pending-friends' : ''}`}
+            className={`channel-item ${isMeHome ? 'active' : ''}`}
             onClick={() => { navigate('/channels/@me'); closeMobileOverlay(); }}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" className="channel-icon-svg" aria-hidden="true">
+              <path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8h5Z" />
+            </svg>
+            <span>Home</span>
+          </div>
+          <div
+            className={`channel-item ${isFriends ? 'active' : ''} ${((user?.relations || []).filter((r) => r.status === 'Incoming').length > 0) ? 'has-pending-friends' : ''}`}
+            onClick={() => { navigate('/channels/@me/friends'); closeMobileOverlay(); }}
           >
             {(user?.relations || []).filter((r) => r.status === 'Incoming').length > 0 && (
               <span className="friends-pending-badge" aria-label="Pending friend requests">
@@ -237,6 +258,23 @@ function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreate
 
   return (
     <div className="channel-sidebar" role={isDrawerOpen ? 'dialog' : undefined} aria-modal={isDrawerOpen ? 'true' : undefined} aria-label={isDrawerOpen ? 'Channels' : undefined}>
+      {serverChannelsLoading ? (
+        <>
+          <div className="sidebar-header server-name-header channel-sidebar-header--loading" aria-busy="true">
+            <span className="channel-sidebar-skel-title" />
+            <span className="channel-sidebar-skel-chevron" aria-hidden="true" />
+          </div>
+          <div className="sidebar-channels channel-sidebar-channels--loading">
+            <div className="channel-category channel-sidebar-skel-label">TEXT CHANNELS</div>
+            <div className="channel-sidebar-skel-row" />
+            <div className="channel-sidebar-skel-row medium" />
+            <div className="channel-sidebar-skel-row" />
+            <div className="channel-category channel-sidebar-skel-label">VOICE CHANNELS</div>
+            <div className="channel-sidebar-skel-row short" />
+          </div>
+        </>
+      ) : (
+        <>
       <div className="sidebar-header server-name-header" onClick={() => setShowDropdown(!showDropdown)}>
         <span className="server-title">{server?.name || 'Server'}</span>
         <svg width="18" height="18" viewBox="0 0 24 24" className="dropdown-arrow"><path fill="currentColor" d="M7 10l5 5 5-5z"/></svg>
@@ -373,6 +411,8 @@ function ChannelSidebar({ type, server, channels, serverId, dms, onChannelCreate
         })()}
       </div>
       <VoicePanel />
+        </>
+      )}
       <UserPanel user={user} />
 
       {showCreateChannel && (

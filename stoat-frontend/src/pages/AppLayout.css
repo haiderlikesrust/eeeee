@@ -33,6 +33,70 @@
   gap: 8px;
 }
 
+/* Server index route while GET /servers/:id is in flight */
+.server-chat-loading-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-primary);
+}
+
+.server-chat-loading-header {
+  height: 48px;
+  border-bottom: 1px solid var(--input-border);
+  background: linear-gradient(
+    90deg,
+    var(--bg-secondary) 0%,
+    var(--bg-modifier-selected) 50%,
+    var(--bg-secondary) 100%
+  );
+  background-size: 200% 100%;
+  animation: server-chat-skel-shimmer 1.1s ease-in-out infinite;
+}
+
+.server-chat-loading-body {
+  flex: 1;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.server-chat-loading-row {
+  height: 52px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(
+    90deg,
+    var(--bg-floating) 0%,
+    var(--bg-modifier-hover) 50%,
+    var(--bg-floating) 100%
+  );
+  background-size: 200% 100%;
+  animation: server-chat-skel-shimmer 1.1s ease-in-out infinite;
+}
+
+.server-chat-loading-row.short {
+  width: 72%;
+}
+
+@keyframes server-chat-skel-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .server-chat-loading-header,
+  .server-chat-loading-row {
+    animation: none;
+    background: var(--bg-floating);
+  }
+}
+
 /* Mobile backdrop */
 .mobile-backdrop {
   display: none;

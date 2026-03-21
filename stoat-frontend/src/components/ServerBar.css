@@ -211,6 +211,53 @@
   line-height: 1.5;
 }
 
+/* Fields: Auth.css is not loaded here — inputs were unstyled (light browser defaults). */
+.server-modal-box .auth-label {
+  display: block;
+  margin-bottom: 4px;
+  text-align: left;
+}
+
+.server-modal-box .auth-label span {
+  display: block;
+  color: var(--header-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+.server-modal-box .auth-label input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  font-size: 15px;
+  font-family: inherit;
+  line-height: 1.4;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.server-modal-box .auth-label input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.server-modal-box .auth-label input:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.server-modal-box .auth-label input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;

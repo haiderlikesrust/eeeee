@@ -11,6 +11,8 @@ export function AuthProvider({ children }) {
     try {
       const u = await get('/users/@me');
       setUser(u);
+      // Warm the main app shell chunk so /channels/* doesn’t flash a blank Suspense frame on first visit.
+      import('../pages/AppLayout').catch(() => {});
     } catch {
       setToken(null);
       saveSession(null);

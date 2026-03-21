@@ -14,6 +14,7 @@ import ChatArea from '../components/ChatArea';
 import MemberSidebar from '../components/MemberSidebar';
 import OfeedPanel from '../components/OfeedPanel';
 import FriendsPage from '../components/FriendsPage';
+import MeHomePage from '../components/MeHomePage';
 import VoiceChannelView from '../components/VoiceChannelView';
 import './AppLayout.css';
 
@@ -77,9 +78,8 @@ function AppLayoutInner() {
       const d = data?.d ?? data?.data ?? data;
       if (!d?.channel) return;
       const path = location.pathname;
-      const viewingChannelId = path.startsWith('/channels/@me/')
-        ? path.split('/').pop()
-        : (path.match(/\/channels\/[^/]+\/([^/]+)$/)?.[1] ?? null);
+      const meTail = path.startsWith('/channels/@me/') ? path.split('/').pop() : null;
+      const viewingChannelId = meTail && meTail !== 'friends' ? meTail : (!path.startsWith('/channels/@me/') ? (path.match(/\/channels\/[^/]+\/([^/]+)$/)?.[1] ?? null) : null);
       if (viewingChannelId !== d.channel) fetchUnreads();
     });
   }, [on, location.pathname, fetchUnreads]);
@@ -180,7 +180,8 @@ function AppLayoutInner() {
               <div className="chat-container">
                 <div className="chat-main">
                   <Routes>
-                    <Route index element={<FriendsPage />} />
+                    <Route index element={<MeHomePage />} />
+                    <Route path="friends" element={<FriendsPage />} />
                     <Route path=":channelId" element={<MeChannelChat />} />
                   </Routes>
                 </div>
@@ -206,7 +207,12 @@ function AppLayoutInner() {
           element={
             <>
               <ChannelSidebar type="home" dms={dms} />
-              <FriendsPage />
+              <div className="chat-container">
+                <div className="chat-main">
+                  <MeHomePage />
+                </div>
+                <OfeedPanel />
+              </div>
             </>
           }
         />
@@ -225,13 +231,21 @@ function ServerView({ servers, setServers, addServer, removeServer, onSelfRemove
   const handleChannelAccessLost = useCallback(() => {
     if (serverId) onSelfRemovedFromServer(serverId);
   }, [serverId, onSelfRemovedFromServer]);
-  const { on, connected } = useWS();
+  const { on } = useWS();
   const [server, setServer] = useState(null);
   const [channels, setChannels] = useState([]);
   const [members, setMembers] = useState([]);
+  const [serverLoading, setServerLoading] = useState(!!serverId);
 
   const loadServer = useCallback(async () => {
-    if (!serverId) return;
+    if (!serverId) {
+      setServerLoading(false);
+      return;
+    }
+    setServerLoading(true);
+    setServer(null);
+    setChannels([]);
+    setMembers([]);
     try {
       const s = await get(`/servers/${serverId}`);
       setServer(s);
@@ -240,18 +254,18 @@ function ServerView({ servers, setServers, addServer, removeServer, onSelfRemove
       addServer(s);
       const m = await get(`/servers/${serverId}/members`);
       setMembers(m || []);
-    } catch {}
-  }, [serverId]);
+    } catch {
+      setServer(null);
+      setChannels([]);
+      setMembers([]);
+    } finally {
+      setServerLoading(false);
+    }
+  }, [serverId, addServer]);
 
   useEffect(() => {
     loadServer();
   }, [loadServer]);
-
-  useEffect(() => {
-    if (connected && serverId) {
-      get(`/servers/${serverId}/members`).then((m) => setMembers(m || [])).catch(() => {});
-    }
-  }, [connected, serverId]);
 
   useEffect(() => {
     if (!on || !serverId) return;
@@ -332,6 +346,7 @@ function ServerView({ servers, setServers, addServer, removeServer, onSelfRemove
         server={server}
         channels={channels}
         serverId={serverId}
+        serverChannelsLoading={serverLoading}
         onChannelCreated={handleChannelCreated}
         onServerUpdated={handleServerUpdated}
         onServerDeleted={handleServerDeleted}
@@ -352,11 +367,24 @@ function ServerView({ servers, setServers, addServer, removeServer, onSelfRemove
         <Route
           index
           element={
-            channels.length > 0 ? (
+            serverLoading ? (
+              <div className="chat-container">
+                <div className="server-chat-loading-main">
+                  <div className="server-chat-loading-header" />
+                  <div className="server-chat-loading-body">
+                    <div className="server-chat-loading-row" />
+                    <div className="server-chat-loading-row short" />
+                    <div className="server-chat-loading-row" />
+                  </div>
+                </div>
+                <OfeedPanel />
+              </div>
+            ) : channels.length > 0 ? (
               <AutoRedirect serverId={serverId} channels={channels} />
             ) : (
               <div className="chat-container">
                 <div className="empty-state">Select a channel</div>
+                <OfeedPanel />
               </div>
             )
           }

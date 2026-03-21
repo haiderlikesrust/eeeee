@@ -304,6 +304,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
 }
 
 .profile-card-roles {
@@ -324,13 +325,52 @@
 }
 
 .profile-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  color: var(--text-link);
+  font-weight: 600;
+  color: var(--text-normal);
   text-decoration: none;
+  background: var(--bg-modifier-hover);
+  border: 1px solid var(--input-border);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.profile-card-link-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.profile-card-link-icon {
+  flex-shrink: 0;
+  opacity: 0.65;
 }
 
 .profile-card-link:hover {
-  text-decoration: underline;
+  text-decoration: none;
+  color: var(--accent);
+  background: var(--accent-muted);
+  border-color: rgba(16, 185, 129, 0.35);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.12);
+}
+
+.profile-card-link:hover .profile-card-link-icon {
+  opacity: 1;
+}
+
+.profile-card-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-muted);
 }
 
 .profile-card-actions {

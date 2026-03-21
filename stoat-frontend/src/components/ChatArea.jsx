@@ -226,7 +226,11 @@ function renderMessageContent(content, customEmojiMap, user, mentionDirectory, o
       if (shouldHideOfeedUrlInMessage(part, linkPreviews)) {
         return null;
       }
-      return <a key={i} href={part} target="_blank" rel="noreferrer">{part}</a>;
+      return (
+        <a key={i} href={part} target="_blank" rel="noreferrer" className="msg-external-link">
+          {part}
+        </a>
+      );
     }
     if (part === '@everyone') {
       return <span key={i} className="msg-mention role-mention everyone">@everyone</span>;
@@ -371,7 +375,8 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     setRoleDirectory({ byName, byId });
   }, [serverRoles]);
 
-  const fetchMessages = useCallback(async () => {
+  const fetchMessages = useCallback(async (opts = {}) => {
+    const skipPerms = opts.skipPerms === true;
     if (!channelId) return;
     const cid = channelId;
     let ch;
@@ -398,44 +403,50 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     try {
       setChannel(ch);
       setMessages((prev) => mergeMessagesWithPendingOptimistic(prev, msgs));
-      setLoading(false);
-      if (ch.server) {
-        try {
-          const [p, emojis, members] = await Promise.all([
-            get(`/channels/${cid}/permissions`).catch(() => ({})),
-            get(`/servers/${ch.server}/emojis`).catch(() => []),
-            get(`/servers/${ch.server}/members`).catch(() => []),
-          ]);
-          if (channelIdRef.current !== cid) return;
-          setPerms(typeof p?.permissions === 'number' ? p.permissions : 0);
-          const map = {};
-          for (const e of (emojis || [])) map[e._id] = e;
-          setCustomEmojis(map);
-          const byName = {};
-          const byId = {};
-          for (const m of (members || [])) {
-            const u = typeof m.user === 'object' ? m.user : null;
-            if (!u) continue;
-            byId[u._id] = m;
-            const keys = [
-              u.username,
-              u.display_name,
-              m.nickname,
-            ].filter(Boolean).map((k) => String(k).toLowerCase());
-            for (const k of keys) byName[k] = m;
+      /** Until perms load, `perms === 0` reads as “no send” — only end loading after we know permissions (initial load). */
+      if (!skipPerms) {
+        if (ch.server) {
+          try {
+            const [p, emojis, members] = await Promise.all([
+              get(`/channels/${cid}/permissions`).catch(() => ({})),
+              get(`/servers/${ch.server}/emojis`).catch(() => []),
+              get(`/servers/${ch.server}/members`).catch(() => []),
+            ]);
+            if (channelIdRef.current !== cid) return;
+            setPerms(typeof p?.permissions === 'number' ? p.permissions : 0);
+            const map = {};
+            for (const e of (emojis || [])) map[e._id] = e;
+            setCustomEmojis(map);
+            const byName = {};
+            const byId = {};
+            for (const m of (members || [])) {
+              const u = typeof m.user === 'object' ? m.user : null;
+              if (!u) continue;
+              byId[u._id] = m;
+              const keys = [
+                u.username,
+                u.display_name,
+                m.nickname,
+              ].filter(Boolean).map((k) => String(k).toLowerCase());
+              for (const k of keys) byName[k] = m;
+            }
+            setMentionDirectory({ byName, byId });
+          } catch {
+            if (channelIdRef.current !== cid) return;
+            setPerms(0);
+            setMentionDirectory({ byName: {}, byId: {} });
           }
-          setMentionDirectory({ byName, byId });
-        } catch {
+        } else {
           if (channelIdRef.current !== cid) return;
-          setPerms(0);
+          setPerms(ALL_PERMISSIONS);
           setMentionDirectory({ byName: {}, byId: {} });
         }
-      } else {
         if (channelIdRef.current !== cid) return;
-        setPerms(ALL_PERMISSIONS);
-        setMentionDirectory({ byName: {}, byId: {} });
+        setLoading(false);
       }
-    } catch {}
+    } catch {
+      if (channelIdRef.current === cid) setLoading(false);
+    }
   }, [channelId]);
 
   const fetchMessagesRef = useRef(fetchMessages);
@@ -444,6 +455,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   useEffect(() => {
     if (!channelId) return;
     setLoading(true);
+    setPerms(0);
     setMessages([]);
     setShowSearch(false);
     setShowPinned(false);
@@ -451,7 +463,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     setMentionCard(null);
     fetchMessagesRef.current();
     const pollIntervalMs = 10000;
-    pollRef.current = setInterval(() => fetchMessagesRef.current(), pollIntervalMs);
+    pollRef.current = setInterval(() => fetchMessagesRef.current({ skipPerms: true }), pollIntervalMs);
     return () => clearInterval(pollRef.current);
   }, [channelId]);
 
@@ -1043,14 +1055,27 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     ? (channel.other_user.display_name || channel.other_user.username || 'Direct Message')
     : (channel?.name || 'Channel');
 
-  if (loading && messages.length === 0) {
+  /** Keep full composer (and perms-based UI) hidden until `loading` is false — messages often arrive before `/permissions`, and perms default to 0 (looks like “no send”). */
+  if (loading) {
     return (
-      <div className="chat-area">
+      <div className="chat-area chat-area--initial-load">
         <div className="chat-header">
           {isMobile && <button className="mobile-drawer-btn" onClick={openChannelSidebar} aria-label="Open channels"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg></button>}
-          <span className="hash-big">#</span> {channel ? channelDisplayName : 'Loading...'}
+          <span className="hash-big">#</span>
+          <span className="chat-header-name">{channel ? channelDisplayName : '…'}</span>
         </div>
-        <div className="messages-list"><div className="empty-state">Loading messages...</div></div>
+        <div className="messages-list chat-messages-skel" aria-busy="true" aria-label="Loading messages">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className={`chat-message-skel ${i % 2 === 0 ? 'chat-message-skel--alt' : ''}`}>
+              <div className="chat-message-skel-avatar" />
+              <div className="chat-message-skel-body">
+                <div className="chat-message-skel-line name" />
+                <div className="chat-message-skel-line" />
+                {i % 3 === 0 && <div className="chat-message-skel-line short" />}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

@@ -404,6 +404,44 @@
   flex-shrink: 0;
 }
 
+/* ── Rich presence API ── */
+.dev-presence-panel .dev-presence-actions {
+  margin: 12px 0 16px;
+}
+
+.dev-presence-token-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.dev-presence-token-field span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.dev-presence-token-field input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.dev-presence-token-field input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 /* ── Code block ── */
 .dev-code {
   margin: 10px 0;

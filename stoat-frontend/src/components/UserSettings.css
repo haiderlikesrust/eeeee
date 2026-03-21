@@ -241,11 +241,14 @@
   color: var(--text-muted);
 }
 
-.settings-presence-api-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 12px;
+.settings-dev-portal-link {
+  color: var(--text-link);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.settings-dev-portal-link:hover {
+  text-decoration: underline;
 }
 
 .settings-code-block {

@@ -637,6 +637,84 @@
   align-items: center;
 }
 
+/* ── Server channel list loading skeleton ── */
+.channel-sidebar-header--loading {
+  pointer-events: none;
+  cursor: default;
+  gap: 8px;
+}
+
+.channel-sidebar-skel-title {
+  flex: 1;
+  height: 14px;
+  max-width: 68%;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-floating) 0%,
+    var(--bg-modifier-hover) 45%,
+    var(--bg-floating) 100%
+  );
+  background-size: 200% 100%;
+  animation: channel-sidebar-skel-shimmer 1s ease-in-out infinite;
+}
+
+.channel-sidebar-skel-chevron {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--bg-floating);
+  opacity: 0.6;
+}
+
+.channel-sidebar-channels--loading {
+  padding-top: 4px;
+}
+
+.channel-sidebar-skel-label {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.channel-sidebar-skel-row {
+  height: 32px;
+  margin: 2px 6px 6px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--bg-floating) 0%,
+    var(--bg-modifier-hover) 50%,
+    var(--bg-floating) 100%
+  );
+  background-size: 200% 100%;
+  animation: channel-sidebar-skel-shimmer 1s ease-in-out infinite;
+}
+
+.channel-sidebar-skel-row.medium {
+  max-width: 88%;
+}
+
+.channel-sidebar-skel-row.short {
+  max-width: 62%;
+}
+
+@keyframes channel-sidebar-skel-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .channel-sidebar-skel-title,
+  .channel-sidebar-skel-row {
+    animation: none;
+    background: var(--bg-floating);
+  }
+}
+
 /* ── Mobile overrides ── */
 @media (max-width: 768px) {
   .channel-sidebar {

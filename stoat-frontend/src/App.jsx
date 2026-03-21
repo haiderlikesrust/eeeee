@@ -6,6 +6,7 @@ import { VoiceProvider } from './context/VoiceContext';
 import { UnreadProvider } from './context/UnreadContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { OfeedProvider } from './context/OfeedContext';
+import PageLoadingFallback from './components/PageLoadingFallback';
 
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
@@ -20,18 +21,10 @@ export default function App() {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--text-muted)' }}>
-        Loading...
-      </div>
-    );
+    return <PageLoadingFallback />;
   }
 
-  const fallback = (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--text-muted)' }}>
-      Loading...
-    </div>
-  );
+  const fallback = <PageLoadingFallback />;
 
   if (!user) {
     return (
