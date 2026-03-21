@@ -3,6 +3,10 @@ import { get, post, uploadFile } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useWS } from '../context/WebSocketContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
+import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
+import VoiceRecordingBar from './VoiceRecordingBar';
+import VoiceMessageAttachment from './VoiceMessageAttachment';
+import { isVoiceAttachment, withVoiceMetadata, extensionForVoiceMime } from '../utils/voiceMessage';
 import ServerOwnerCrown from './ServerOwnerCrown';
 import { showServerOwnerCrownForUser } from '../utils/serverOwnerCrownDisplay';
 import './ThreadPanel.css';
@@ -35,6 +39,7 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const voice = useVoiceRecorder();
 
   const channelId = threadChannel?._id;
   const threadName = threadChannel?.thread_name || threadChannel?.name || 'Thread';
@@ -81,6 +86,27 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
     inputRef.current?.focus();
   }, [channelId]);
 
+  const sendVoiceMessage = async () => {
+    const blob = await voice.stop();
+    if (!blob || blob.size < 32) return;
+    const mime = blob.type || 'audio/webm';
+    const ext = extensionForVoiceMime(mime);
+    const file = new File([blob], `voice-message.${ext}`, { type: mime || `audio/${ext}` });
+    setUploading(true);
+    try {
+      const att = withVoiceMetadata(await uploadFile(file), file);
+      const body = { content: '', attachments: [att] };
+      const msg = await post(`/channels/${channelId}/messages`, body);
+      setMessages((prev) => {
+        if (prev.some((m) => m._id === msg._id)) return prev;
+        return [...prev, msg];
+      });
+    } catch {
+      /* keep recording UI idle; user can retry */
+    }
+    setUploading(false);
+  };
+
   const sendMessage = async (e) => {
     e.preventDefault();
     if (!input.trim() && pendingFiles.length === 0) return;
@@ -88,7 +114,7 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
     try {
       let attachments = [];
       for (const file of pendingFiles) {
-        const uploaded = await uploadFile(file);
+        const uploaded = withVoiceMetadata(await uploadFile(file), file);
         attachments.push(uploaded);
       }
       const body = { content: input || '' };
@@ -165,6 +191,9 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
                   <div className="thread-msg-attachments">
                     {msg.attachments.map((att, ai) => {
                       const url = resolveFileUrl(att);
+                      if (isVoiceAttachment(att) && url) {
+                        return <VoiceMessageAttachment key={ai} attachment={att} className="thread-voice" />;
+                      }
                       const isImage = att.content_type?.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(att.filename || '');
                       if (isImage && url) return <img key={ai} src={url} alt={att.filename} className="thread-att-img" />;
                       return (
@@ -183,6 +212,18 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
       </div>
 
       <form className="thread-input-area" onSubmit={sendMessage}>
+        {voice.error && (
+          <div className="voice-rec-error" role="alert">
+            {voice.error}
+          </div>
+        )}
+        {voice.phase === 'recording' && (
+          <VoiceRecordingBar
+            seconds={voice.seconds}
+            onCancel={voice.cancel}
+            onSend={sendVoiceMessage}
+          />
+        )}
         {pendingFiles.length > 0 && (
           <div className="thread-pending-files">
             {pendingFiles.map((f, i) => (
@@ -194,9 +235,26 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
           </div>
         )}
         <div className="thread-input-wrap">
+          <div className="thread-input-leading">
+          <button
+            type="button"
+            className={`thread-voice-btn${voice.phase === 'recording' ? ' recording' : ''}`}
+            onClick={() => {
+              voice.clearError();
+              void voice.start();
+            }}
+            disabled={uploading || voice.phase === 'recording'}
+            title="Record voice message"
+            aria-label="Record voice message"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden focusable="false">
+              <path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
+            </svg>
+          </button>
           <button type="button" className="thread-attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach file">
             <svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 015 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5a2.5 2.5 0 005 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>
           </button>
+          </div>
           <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileSelect} />
           <input
             ref={inputRef}

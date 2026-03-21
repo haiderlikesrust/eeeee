@@ -218,6 +218,15 @@
   border: 1px solid var(--input-border);
   border-radius: var(--radius-md);
   padding: 2px 6px;
+  min-width: 0;
+}
+
+.thread-input-leading {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  gap: 2px;
 }
 
 .thread-attach-btn {
@@ -231,6 +240,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
+  flex-shrink: 0;
   transition: color 0.12s;
 }
 
@@ -240,6 +251,7 @@
 
 .thread-input {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   color: var(--text-normal);

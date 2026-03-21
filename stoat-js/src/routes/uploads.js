@@ -106,12 +106,30 @@ router.post('/', authMiddleware(), upload.single('file'), async (req, res) => {
     url: `/attachments/${file.filename}`,
   };
 
+  try {
+    const sidecar = path.join(UPLOAD_DIR, `${idLocal}.ctype.json`);
+    fs.writeFileSync(sidecar, JSON.stringify({ contentType: file.mimetype }), 'utf8');
+  } catch {
+    /* non-fatal: GET will fall back to extension-based MIME */
+  }
+
   res.json(result);
 });
 
 function serveFile(filePath, originalFilename, res) {
   const ext = path.extname(filePath).toLowerCase();
-  const mime = MIME_MAP[ext] || 'application/octet-stream';
+  const base = path.basename(filePath, ext);
+  const sidecar = path.join(path.dirname(filePath), `${base}.ctype.json`);
+  let mime = MIME_MAP[ext] || 'application/octet-stream';
+  if (fs.existsSync(sidecar)) {
+    try {
+      const raw = fs.readFileSync(sidecar, 'utf8');
+      const j = JSON.parse(raw);
+      if (j?.contentType && typeof j.contentType === 'string') mime = j.contentType;
+    } catch {
+      /* ignore */
+    }
+  }
   res.setHeader('Content-Type', mime);
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   if (!mime.startsWith('image/') && !mime.startsWith('video/') && !mime.startsWith('audio/')) {

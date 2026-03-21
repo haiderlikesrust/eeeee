@@ -680,6 +680,61 @@
 .chat-input-composer {
   position: relative;
   width: 100%;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  background: var(--input-bg);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.chat-input-composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
+.chat-input-composer .formatting-toolbar {
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid var(--input-border);
+}
+
+.chat-input-composer .chat-input-wrap {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-input-composer .chat-input-wrap:focus-within {
+  border: none;
+  box-shadow: none;
+}
+
+/* Leading actions + text field share one row; input must shrink or overflow:hidden on composer clips the mic */
+.chat-input-leading {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  gap: 0;
+}
+
+.chat-input-wrap .chat-voice-btn {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  min-width: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
+  overflow: visible;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.chat-input-wrap .chat-voice-btn svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
 }
 
 /* Autocomplete popup */
@@ -1117,6 +1172,7 @@
 
 .chat-input {
   flex: 1;
+  min-width: 0;
   border: none;
   background: transparent;
   color: var(--text-normal);

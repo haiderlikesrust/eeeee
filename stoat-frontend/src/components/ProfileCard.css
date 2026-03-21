@@ -70,7 +70,8 @@
 
 .profile-card-pronouns {
   font-size: 12px;
-  color: var(--text-muted);
+  font-weight: 600;
+  color: var(--header-secondary);
 }
 
 .profile-card-tag-row {
@@ -137,16 +138,27 @@
   padding: 8px 12px 10px;
   font-size: 13px;
   line-height: 1.45;
-  color: var(--text-muted);
-  background: rgba(0, 0, 0, 0.12);
+  font-weight: 500;
+  color: var(--text-normal);
+  background: var(--bg-primary);
+}
+
+.profile-card-presence-both .profile-card-custom-status {
+  background: var(--bg-secondary);
+}
+
+/* Custom status only (no rich activity): same accent rail as activity block */
+.profile-card-presence-wrap:not(:has(.profile-card-activity)) .profile-card-custom-status {
+  background: linear-gradient(145deg, rgba(67, 181, 129, 0.1), var(--bg-secondary));
+  box-shadow: inset 2px 0 0 rgba(67, 181, 129, 0.38);
 }
 
 .profile-card-custom-status-dot {
   flex-shrink: 0;
   font-size: 9px;
-  color: var(--status-positive, #43b581);
-  margin-top: 3px;
-  opacity: 0.85;
+  color: var(--accent);
+  margin-top: 4px;
+  opacity: 1;
 }
 
 .profile-card-activity {
@@ -324,19 +336,20 @@
   color: var(--text-normal);
 }
 
+/* Match role / system-badge pills (green-accent outline), not a flat gray chip */
 .profile-card-link {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-normal);
+  color: var(--header-primary);
   text-decoration: none;
-  background: var(--bg-modifier-hover);
-  border: 1px solid var(--input-border);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--input-border));
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast),
@@ -353,15 +366,16 @@
 
 .profile-card-link-icon {
   flex-shrink: 0;
-  opacity: 0.65;
+  opacity: 0.8;
+  color: var(--accent);
 }
 
 .profile-card-link:hover {
   text-decoration: none;
   color: var(--accent);
   background: var(--accent-muted);
-  border-color: rgba(16, 185, 129, 0.35);
-  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.12);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.2);
 }
 
 .profile-card-link:hover .profile-card-link-icon {

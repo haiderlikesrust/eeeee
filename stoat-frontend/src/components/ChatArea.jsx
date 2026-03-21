@@ -21,6 +21,11 @@ import OfeedShareLinkCard from './OfeedShareLinkCard';
 import { parseOfeedShareUrl, shouldHideOfeedUrlInMessage } from '../utils/ofeedShareUrl';
 import { isBotUser, isVerifiedBotUser } from '../utils/botDisplay';
 import { userHasOpicStaff } from '../utils/opicStaff';
+import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
+import VoiceRecordingBar from './VoiceRecordingBar';
+import VoiceMessageAttachment from './VoiceMessageAttachment';
+import { isVoiceAttachment, withVoiceMetadata, extensionForVoiceMime } from '../utils/voiceMessage';
+import './VoiceMessages.css';
 import './ChatArea.css';
 
 /** Same tokenization as renderMessageContent (URLs, mentions, emoji). */
@@ -355,6 +360,8 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   const typingTimeoutRef = useRef(null);
   const typingSendRef = useRef(null);
   const focusInputAfterSendRef = useRef(false);
+
+  const voice = useVoiceRecorder();
 
   const canSend = hasPermission(perms, Permissions.SEND_MESSAGES);
   const canManageMessages = hasPermission(perms, Permissions.MANAGE_MESSAGES);
@@ -736,6 +743,63 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   };
   const cancelReply = () => setReplyingTo(null);
 
+  const sendVoiceMessage = async () => {
+    const blob = await voice.stop();
+    if (!blob || blob.size < 32) return;
+    sendTypingStop();
+    const mime = blob.type || 'audio/webm';
+    const ext = extensionForVoiceMime(mime);
+    const file = new File([blob], `voice-message.${ext}`, { type: mime || `audio/${ext}` });
+    const replySnap = replyingTo ? { ...replyingTo } : null;
+    let optimisticId = null;
+    setUploading(true);
+    try {
+      const att = withVoiceMetadata(await uploadFile(file), file);
+      const body = { content: '', attachments: [att] };
+      if (replySnap) body.replies = [replySnap._id];
+      optimisticId = `__opt__${crypto.randomUUID()}`;
+      const optimisticMsg = {
+        _id: optimisticId,
+        channel: channelId,
+        author: user,
+        content: '',
+        attachments: [att],
+        created_at: new Date().toISOString(),
+        replies: replySnap ? [replySnap._id] : [],
+        reply_context: replySnap
+          ? [{
+            _id: replySnap._id,
+            author: { display_name: replySnap.author, username: replySnap.author },
+            content: replySnap.content,
+          }]
+          : [],
+        _optimistic: true,
+      };
+      setMessages((prev) => [...prev, optimisticMsg]);
+      setReplyingTo(null);
+      setUploading(false);
+      const msg = await post(`/channels/${channelId}/messages`, body);
+      setMessages((prev) => {
+        if (prev.some((m) => m._id === msg._id)) {
+          return prev.filter((m) => m._id !== optimisticId);
+        }
+        if (prev.some((m) => m._id === optimisticId)) {
+          return prev.map((m) => (m._id === optimisticId ? msg : m));
+        }
+        return [...prev, msg];
+      });
+      if (channel?.slowmode > 0) setSlowmodeCooldown(channel.slowmode);
+    } catch (err) {
+      if (optimisticId) {
+        setMessages((prev) => prev.filter((m) => m._id !== optimisticId));
+      }
+      if (err?.retry_after) setSlowmodeCooldown(err.retry_after);
+      if (replySnap) setReplyingTo(replySnap);
+    }
+    focusInputAfterSendRef.current = true;
+    setUploading(false);
+  };
+
   const sendMessage = async (e) => {
     e.preventDefault();
     if (!input.trim() && pendingFiles.length === 0) return;
@@ -749,7 +813,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     try {
       const attachments = [];
       for (const file of filesSnapshot) {
-        attachments.push(await uploadFile(file));
+        attachments.push(withVoiceMetadata(await uploadFile(file), file));
       }
       const body = { content: contentSnapshot };
       if (attachments.length > 0) body.attachments = attachments;
@@ -1269,6 +1333,9 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                       <div className="msg-attachments">
                         {msg.attachments.map((att, ai) => {
                           const url = resolveFileUrl(att);
+                          if (isVoiceAttachment(att) && url) {
+                            return <VoiceMessageAttachment key={ai} attachment={att} />;
+                          }
                           const isImage = att.content_type?.startsWith('image/') || att.metadata?.type === 'Image' || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(att.filename || '');
                           const isVideo = att.content_type?.startsWith('video/') || att.metadata?.type === 'Video';
                           if (isImage && url) return <img key={ai} src={url} alt={att.filename || 'image'} className="msg-attachment-img" onClick={() => setLightboxSrc(url)} />;
@@ -1404,11 +1471,27 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               <button type="button" className="reply-bar-close" onClick={cancelReply} aria-label="Cancel reply">×</button>
             </div>
           )}
+          {voice.error && (
+            <div className="voice-rec-error" role="alert">
+              {voice.error}
+            </div>
+          )}
+          {voice.phase === 'recording' && (
+            <VoiceRecordingBar
+              seconds={voice.seconds}
+              onCancel={voice.cancel}
+              onSend={sendVoiceMessage}
+            />
+          )}
           {pendingFiles.length > 0 && (
             <div className="pending-files">
               {pendingFiles.map((f, i) => (
                 <div key={i} className="pending-file">
-                  {f.type?.startsWith('image/') ? <img src={URL.createObjectURL(f)} alt={f.name} className="pending-file-thumb" /> : (
+                  {f.type?.startsWith('image/') ? <img src={URL.createObjectURL(f)} alt={f.name} className="pending-file-thumb" /> : f.type?.startsWith('audio/') ? (
+                    <div className="pending-file-icon pending-file-icon--audio" aria-hidden>
+                      <svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+                    </div>
+                  ) : (
                     <div className="pending-file-icon"><svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zM13 9V3.5L18.5 9H13z"/></svg></div>
                   )}
                   <span className="pending-file-name">{f.name}</span>
@@ -1454,11 +1537,28 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
             )}
             <FormattingToolbar inputRef={inputRef} value={input} onChange={setInput} />
             <div className="chat-input-wrap">
+            <div className="chat-input-leading">
+            <button
+              type="button"
+              className={`chat-voice-btn${voice.phase === 'recording' ? ' recording' : ''}`}
+              onClick={() => {
+                voice.clearError();
+                void voice.start();
+              }}
+              disabled={uploading || slowmodeCooldown > 0 || voice.phase === 'recording'}
+              title="Record voice message"
+              aria-label="Record voice message"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden focusable="false">
+                <path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
+              </svg>
+            </button>
             {canAttach && (
               <button type="button" className="chat-attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach file">
                 <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>
               </button>
             )}
+            </div>
             <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileSelect} />
             <input
               ref={inputRef}

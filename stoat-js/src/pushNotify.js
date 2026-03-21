@@ -44,7 +44,10 @@ export function notifyPushForNewMessage(ch, authorId, payload) {
 
       const author = typeof payload?.author === 'object' ? payload.author : null;
       const authorName = author?.display_name || author?.username || 'Someone';
-      const preview = (payload?.content || '').slice(0, 120) || '(attachment)';
+      const hasVoice = Array.isArray(payload?.attachments)
+        && payload.attachments.some((a) => a?.metadata?.voice === true);
+      const preview = (payload?.content || '').slice(0, 120)
+        || (hasVoice ? 'Voice message' : '(attachment)');
       const title = authorName;
       const body = preview;
       const data = JSON.stringify({
