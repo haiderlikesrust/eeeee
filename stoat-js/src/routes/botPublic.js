@@ -6,6 +6,7 @@ import {
 import { toPublicUser } from '../publicUser.js';
 import {
   Permissions, computeChannelPermissions, computeServerPermissions, hasPermission, outranks, sameId,
+  isVoiceMessageAttachment,
 } from '../permissions.js';
 import { broadcastToChannel, broadcastToServer, broadcastToUser, GatewayIntents } from '../events.js';
 import { notifyPushForNewMessage } from '../pushNotify.js';
@@ -223,6 +224,18 @@ router.post('/channels/:target/messages', botAuth, async (req, res) => {
     const ctx = await getChannelPerms(ch, req.userId);
     if (ctx && !hasPermission(ctx.perms, Permissions.SEND_MESSAGES)) {
       return res.status(403).json({ type: 'Forbidden', error: 'Missing SEND_MESSAGES permission' });
+    }
+    if (ctx) {
+      const rawAtt = req.body?.attachments;
+      const attachments = Array.isArray(rawAtt) ? rawAtt : [];
+      const hasVoice = attachments.some((a) => isVoiceMessageAttachment(a));
+      const hasNonVoiceFile = attachments.some((a) => !isVoiceMessageAttachment(a));
+      if (hasVoice && !hasPermission(ctx.perms, Permissions.SEND_VOICE_MESSAGE)) {
+        return res.status(403).json({ type: 'Forbidden', error: 'Missing SEND_VOICE_MESSAGE permission' });
+      }
+      if (hasNonVoiceFile && !hasPermission(ctx.perms, Permissions.ATTACH_FILES)) {
+        return res.status(403).json({ type: 'Forbidden', error: 'Missing ATTACH_FILES permission' });
+      }
     }
   }
 

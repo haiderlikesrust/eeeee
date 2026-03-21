@@ -10,6 +10,7 @@ import {
   Permissions, PERMISSION_INFO, CHANNEL_PERMISSION_INFO,
   hasPermission, hasServerPermission, hasEffectiveRolePermission, toggleRolePermissionBitmask,
   DEFAULT_EVERYONE_PERMS,
+  coerceConsistentServerPermissions,
 } from '../utils/permissions';
 import './ServerSettings.css';
 
@@ -184,7 +185,9 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const [editRolePerms, setEditRolePerms] = useState(0);
   const [saving, setSaving] = useState(false);
   const [iconUploading, setIconUploading] = useState(false);
-  const [defaultPerms, setDefaultPerms] = useState(server?.default_permissions ?? DEFAULT_EVERYONE_PERMS);
+  const [defaultPerms, setDefaultPerms] = useState(() =>
+    coerceConsistentServerPermissions(server?.default_permissions ?? DEFAULT_EVERYONE_PERMS),
+  );
   const [selectedChannel, setSelectedChannel] = useState(null);
   const [channelOverrides, setChannelOverrides] = useState({});
   const [selectedOverrideRole, setSelectedOverrideRole] = useState('everyone');
@@ -251,7 +254,7 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
       }));
       parsed.sort((a, b) => b.rank - a.rank);
       setRoles(parsed);
-      setDefaultPerms(s?.default_permissions ?? DEFAULT_EVERYONE_PERMS);
+      setDefaultPerms(coerceConsistentServerPermissions(s?.default_permissions ?? DEFAULT_EVERYONE_PERMS));
       if (onUpdated) onUpdated(s);
     } catch {}
   };
@@ -326,7 +329,8 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
 
   const saveDefaultPerms = async () => {
     try {
-      await put(`/servers/${serverId}/permissions/default`, { permissions: defaultPerms });
+      const coerced = coerceConsistentServerPermissions(defaultPerms);
+      await put(`/servers/${serverId}/permissions/default`, { permissions: coerced });
       await fetchRoles();
       toast.success('@everyone permissions updated');
     } catch (err) {
@@ -362,11 +366,12 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const saveRole = async () => {
     if (!editingRole) return;
     try {
+      const coerced = coerceConsistentServerPermissions(editRolePerms);
       await patch(`/servers/${serverId}/roles/${editingRole}`, {
         name: editRoleName || undefined,
         colour: editRoleColor || null,
         hoist: editRoleHoist,
-        permissions: editRolePerms,
+        permissions: coerced,
       });
       setEditingRole(null);
       await fetchRoles();
@@ -653,6 +658,7 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
             <div className="settings-section">
               <h2>@everyone Default Permissions</h2>
               <p className="settings-hint">These permissions apply to every member as the base layer. Roles add on top of this.</p>
+              <p className="settings-hint">Send Messages requires Read Messages. Attach Files and Send Voice Messages control file uploads and voice clips in text channels.</p>
               <PermissionEditor value={defaultPerms} onChange={setDefaultPerms} items={PERMISSION_INFO.filter(p => p.key !== 'ADMINISTRATOR')} />
               <button className="modal-btn primary" onClick={saveDefaultPerms} style={{ marginTop: 16 }}>Save @everyone Permissions</button>
             </div>
@@ -685,7 +691,7 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
                     {r.hoist && <span className="role-hoist-badge">Hoisted</span>}
                     {hasPermission(r.permissions || 0, Permissions.ADMINISTRATOR) && <span className="role-admin-badge">Admin</span>}
                     <div className="role-hierarchy-actions">
-                      <button className="settings-warn-btn" onClick={() => { setEditingRole(r.id); setEditRoleName(r.name); setEditRoleColor(r.colour || '#99aab5'); setEditRoleHoist(!!r.hoist); setEditRolePerms(r.permissions || 0); }}>Edit</button>
+                      <button className="settings-warn-btn" onClick={() => { setEditingRole(r.id); setEditRoleName(r.name); setEditRoleColor(r.colour || '#99aab5'); setEditRoleHoist(!!r.hoist); setEditRolePerms(coerceConsistentServerPermissions(r.permissions || 0)); }}>Edit</button>
                       <button className="settings-danger-btn" onClick={() => deleteRole(r.id)}>Delete</button>
                     </div>
                   </div>

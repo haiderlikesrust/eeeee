@@ -145,8 +145,8 @@ router.post('/@me/presence-token', authMiddleware(), async (req, res) => {
 router.delete('/@me/presence-token', authMiddleware(), async (req, res) => {
   const user = await User.findById(req.userId);
   if (!user) return res.status(404).json({ type: 'NotFound', error: 'User not found' });
-  user.presence_api_token = null;
-  await user.save();
+  await User.updateOne({ _id: user._id }, { $unset: { presence_api_token: 1 } });
+  user.presence_api_token = undefined;
   res.json(toPublicUser(user, { relationship: 'User', online: isUserOnlineDisplay(req.userId, user) }));
 });
 

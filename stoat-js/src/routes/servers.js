@@ -5,6 +5,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import {
   Permissions, DEFAULT_EVERYONE_PERMS, ALL_PERMISSIONS,
   computeServerPermissions, hasPermission, outranks, canManageRole, sameId,
+  coerceConsistentServerPermissions,
 } from '../permissions.js';
 import { broadcastToServer, broadcastToUser, isUserOnlineDisplay } from '../events.js';
 import { toPublicUser } from '../publicUser.js';
@@ -83,7 +84,7 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   if (icon != null) ctx.server.icon = icon;
   if (banner != null) ctx.server.banner = banner;
   if (default_permissions != null && sameId(ctx.server.owner, req.userId)) {
-    ctx.server.default_permissions = default_permissions;
+    ctx.server.default_permissions = coerceConsistentServerPermissions(default_permissions);
   }
   if (locked != null && sameId(ctx.server.owner, req.userId)) {
     ctx.server.locked = !!locked;
@@ -317,7 +318,7 @@ router.post('/:target/roles', authMiddleware(), async (req, res) => {
     colour: colour || null,
     hoist: !!hoist,
     rank: rank ?? 0,
-    permissions: typeof permissions === 'number' ? permissions : 0,
+    permissions: coerceConsistentServerPermissions(typeof permissions === 'number' ? permissions : 0),
   };
   ctx.server.markModified('roles');
   await ctx.server.save();
@@ -358,7 +359,7 @@ router.patch('/:target/roles/:role_id', authMiddleware(), async (req, res) => {
   if (colour != null) ctx.server.roles[roleId].colour = colour;
   if (hoist != null) ctx.server.roles[roleId].hoist = !!hoist;
   if (rank != null) ctx.server.roles[roleId].rank = rank;
-  if (permissions != null) ctx.server.roles[roleId].permissions = permissions;
+  if (permissions != null) ctx.server.roles[roleId].permissions = coerceConsistentServerPermissions(permissions);
   ctx.server.markModified('roles');
   await ctx.server.save();
   res.json(ctx.server.roles[roleId]);
@@ -404,7 +405,7 @@ router.put('/:target/permissions/default', authMiddleware(), async (req, res) =>
   if (!server) return res.status(404).json({ type: 'NotFound', error: 'Server not found' });
   if (server.owner !== req.userId) return res.status(403).json({ type: 'Forbidden', error: 'Only owner' });
   const { permissions } = req.body || {};
-  if (permissions != null) server.default_permissions = permissions;
+  if (permissions != null) server.default_permissions = coerceConsistentServerPermissions(permissions);
   await server.save();
   res.status(204).send();
 });
@@ -419,7 +420,7 @@ router.put('/:target/permissions/:role_id', authMiddleware(), async (req, res) =
   ctx.server.roles = ctx.server.roles || {};
   const role = ctx.server.roles[req.params.role_id];
   if (!role) return res.status(404).json({ type: 'NotFound', error: 'Role not found' });
-  if (req.body?.permissions != null) role.permissions = req.body.permissions;
+  if (req.body?.permissions != null) role.permissions = coerceConsistentServerPermissions(req.body.permissions);
   ctx.server.markModified('roles');
   await ctx.server.save();
   res.status(204).send();

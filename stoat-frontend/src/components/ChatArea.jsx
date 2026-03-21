@@ -363,11 +363,22 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
 
   const voice = useVoiceRecorder();
 
-  const canSend = hasPermission(perms, Permissions.SEND_MESSAGES);
-  const canManageMessages = hasPermission(perms, Permissions.MANAGE_MESSAGES);
-  const canAttach = hasPermission(perms, Permissions.ATTACH_FILES);
-  const canReact = hasPermission(perms, Permissions.ADD_REACTIONS);
+  /** Server owner always has full channel rights in the UI (matches API owner bypass). Voice uses Attach Files (no separate bit). */
+  const effectivePerms =
+    channel?.server && serverOwnerId && user?._id && String(serverOwnerId) === String(user._id)
+      ? ALL_PERMISSIONS
+      : perms;
+
+  const canSend = hasPermission(effectivePerms, Permissions.SEND_MESSAGES);
+  const canManageMessages = hasPermission(effectivePerms, Permissions.MANAGE_MESSAGES);
+  const canAttachFiles = hasPermission(effectivePerms, Permissions.ATTACH_FILES);
+  const canSendVoiceMessage = hasPermission(effectivePerms, Permissions.SEND_VOICE_MESSAGE);
+  const canReact = hasPermission(effectivePerms, Permissions.ADD_REACTIONS);
   const canSubmitMessage = (input.trim().length > 0 || pendingFiles.length > 0) && !uploading && slowmodeCooldown <= 0;
+
+  useEffect(() => {
+    if (!canAttachFiles) setPendingFiles((p) => (p.length === 0 ? p : []));
+  }, [canAttachFiles]);
 
   useEffect(() => {
     const byName = {};
@@ -420,7 +431,11 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               get(`/servers/${ch.server}/members`).catch(() => []),
             ]);
             if (channelIdRef.current !== cid) return;
-            setPerms(typeof p?.permissions === 'number' ? p.permissions : 0);
+            {
+              const raw = p?.permissions;
+              const n = typeof raw === 'number' ? raw : Number(raw);
+              setPerms(Number.isFinite(n) ? n : 0);
+            }
             const map = {};
             for (const e of (emojis || [])) map[e._id] = e;
             setCustomEmojis(map);
@@ -1537,19 +1552,22 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
             )}
             <FormattingToolbar inputRef={inputRef} value={input} onChange={setInput} />
             <div className="chat-input-row">
+            {(canAttachFiles || canSendVoiceMessage) && (
             <div className="chat-input-leading">
+            {canAttachFiles && (
             <button
               type="button"
               className="chat-attach-btn"
-              onClick={() => canAttach && fileInputRef.current?.click()}
-              disabled={!canAttach}
-              title={canAttach ? 'Attach file' : 'You do not have permission to attach files'}
-              aria-label={canAttach ? 'Attach file' : 'Attach file (not allowed)'}
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach file"
+              aria-label="Attach file"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
                 <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
               </svg>
             </button>
+            )}
+            {canSendVoiceMessage && (
             <button
               type="button"
               className={`chat-voice-btn${voice.phase === 'recording' ? ' recording' : ''}`}
@@ -1565,9 +1583,13 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                 <path fill="currentColor" d="M12 14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2s-2 .9-2 2v6c0 1.1.9 2 2 2zm5-2h-2c0 2.76-2.24 5-5 5s-5-2.24-5-5H6c0 3.53 2.61 6.43 6 6.92V20h2v-1.08c3.39-.49 6-3.39 6-6.92z" />
               </svg>
             </button>
+            )}
             </div>
+            )}
             <div className="chat-input-field-shell">
+            {canAttachFiles && (
             <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileSelect} />
+            )}
             <div className="chat-input-text-cell">
             <input
               ref={inputRef}
@@ -1576,7 +1598,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               onChange={(e) => { setInput(e.target.value); scheduleTyping(); }}
               onFocus={() => mentionCard && setMentionCard(null)}
               onBlur={sendTypingStop}
-              onPaste={canAttach ? handlePaste : undefined}
+              onPaste={canAttachFiles ? handlePaste : undefined}
               onKeyDown={handleInputKeyDown}
               placeholder={slowmodeCooldown > 0 ? `Slowmode: ${slowmodeCooldown}s remaining...` : uploading ? 'Uploading...' : `Message ${channel?.channel_type === 'DirectMessage' ? '@' : '#'}${channelDisplayName}`}
               disabled={uploading || slowmodeCooldown > 0}

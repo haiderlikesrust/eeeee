@@ -9,6 +9,7 @@ import VoiceMessageAttachment from './VoiceMessageAttachment';
 import { isVoiceAttachment, withVoiceMetadata, extensionForVoiceMime } from '../utils/voiceMessage';
 import ServerOwnerCrown from './ServerOwnerCrown';
 import { showServerOwnerCrownForUser } from '../utils/serverOwnerCrownDisplay';
+import { Permissions, hasPermission, ALL_PERMISSIONS } from '../utils/permissions';
 import './ThreadPanel.css';
 
 function formatTimestamp(d) {
@@ -36,6 +37,7 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
   const [loading, setLoading] = useState(true);
   const [pendingFiles, setPendingFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [channelPerms, setChannelPerms] = useState(0);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -43,6 +45,29 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
 
   const channelId = threadChannel?._id;
   const threadName = threadChannel?.thread_name || threadChannel?.name || 'Thread';
+
+  const effectiveChannelPerms =
+    threadChannel?.server && serverOwnerId && user?._id && String(serverOwnerId) === String(user._id)
+      ? ALL_PERMISSIONS
+      : channelPerms;
+
+  const canAttachFiles = hasPermission(effectiveChannelPerms, Permissions.ATTACH_FILES);
+  const canSendVoiceMessage = hasPermission(effectiveChannelPerms, Permissions.SEND_VOICE_MESSAGE);
+
+  useEffect(() => {
+    if (!channelId) return;
+    get(`/channels/${channelId}/permissions`)
+      .then((p) => {
+        const raw = p?.permissions;
+        const n = typeof raw === 'number' ? raw : Number(raw);
+        setChannelPerms(Number.isFinite(n) ? n : 0);
+      })
+      .catch(() => setChannelPerms(0));
+  }, [channelId]);
+
+  useEffect(() => {
+    if (!canAttachFiles) setPendingFiles((p) => (p.length === 0 ? p : []));
+  }, [canAttachFiles]);
 
   // Fetch thread messages
   useEffect(() => {
@@ -235,12 +260,16 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
           </div>
         )}
         <div className="thread-input-wrap">
+          {(canAttachFiles || canSendVoiceMessage) && (
           <div className="thread-input-leading">
+          {canAttachFiles && (
           <button type="button" className="thread-attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach file" aria-label="Attach file">
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
               <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
             </svg>
           </button>
+          )}
+          {canSendVoiceMessage && (
           <button
             type="button"
             className={`thread-voice-btn${voice.phase === 'recording' ? ' recording' : ''}`}
@@ -256,8 +285,12 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
               <path fill="currentColor" d="M12 14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2s-2 .9-2 2v6c0 1.1.9 2 2 2zm5-2h-2c0 2.76-2.24 5-5 5s-5-2.24-5-5H6c0 3.53 2.61 6.43 6 6.92V20h2v-1.08c3.39-.49 6-3.39 6-6.92z" />
             </svg>
           </button>
+          )}
           </div>
+          )}
+          {canAttachFiles && (
           <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileSelect} />
+          )}
           <input
             ref={inputRef}
             className="thread-input"

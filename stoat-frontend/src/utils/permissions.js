@@ -17,6 +17,7 @@ export const Permissions = {
   SPEAK_VOICE:       1 << 15,
   MUTE_MEMBERS:      1 << 16,
   DEAFEN_MEMBERS:    1 << 17,
+  SEND_VOICE_MESSAGE: 1 << 18,
 };
 
 export const ALL_PERMISSIONS = Object.values(Permissions).reduce((a, b) => a | b, 0);
@@ -29,7 +30,8 @@ export const DEFAULT_EVERYONE_PERMS =
   Permissions.ATTACH_FILES |
   Permissions.ADD_REACTIONS |
   Permissions.CONNECT_VOICE |
-  Permissions.SPEAK_VOICE;
+  Permissions.SPEAK_VOICE |
+  Permissions.SEND_VOICE_MESSAGE;
 
 export const PERMISSION_INFO = [
   { key: 'ADMINISTRATOR', label: 'Administrator', description: 'Full access to everything. Overrides all other permissions and channel overrides.', dangerous: true },
@@ -43,6 +45,7 @@ export const PERMISSION_INFO = [
   { key: 'SEND_MESSAGES', label: 'Send Messages', description: 'Send messages in text channels.' },
   { key: 'READ_MESSAGES', label: 'Read Messages', description: 'View messages in text channels.' },
   { key: 'ATTACH_FILES', label: 'Attach Files', description: 'Upload images and files.' },
+  { key: 'SEND_VOICE_MESSAGE', label: 'Send Voice Messages', description: 'Record and send voice messages in text channels.' },
   { key: 'ADD_REACTIONS', label: 'Add Reactions', description: 'React to messages.' },
   { key: 'CREATE_INVITES', label: 'Create Invites', description: 'Create invite links to the server.' },
   { key: 'CHANGE_NICKNAME', label: 'Change Nickname', description: 'Change own nickname.' },
@@ -53,7 +56,7 @@ export const PERMISSION_INFO = [
 ];
 
 export const CHANNEL_PERMISSION_INFO = PERMISSION_INFO.filter(p =>
-  ['SEND_MESSAGES', 'READ_MESSAGES', 'ATTACH_FILES', 'ADD_REACTIONS',
+  ['SEND_MESSAGES', 'READ_MESSAGES', 'ATTACH_FILES', 'SEND_VOICE_MESSAGE', 'ADD_REACTIONS',
    'MANAGE_MESSAGES', 'CONNECT_VOICE', 'SPEAK_VOICE', 'CREATE_INVITES'].includes(p.key)
 );
 
@@ -84,28 +87,48 @@ export function hasEffectiveRolePermission(bitfield, perm) {
  * Toggle one permission in a role bitfield. If Administrator is set, turning off any other
  * permission clears Administrator and that bit (Discord-style).
  */
+export function coerceConsistentServerPermissions(raw) {
+  let p = Number(raw) || 0;
+  if ((p & Permissions.SEND_MESSAGES) === Permissions.SEND_MESSAGES) {
+    p |= Permissions.READ_MESSAGES;
+  }
+  if ((p & Permissions.READ_MESSAGES) === 0) {
+    p &= ~Permissions.SEND_MESSAGES;
+  }
+  return p >>> 0;
+}
+
 export function toggleRolePermissionBitmask(value, permKey, bit) {
   const v = Number(value) || 0;
+  let next;
   if (permKey === 'ADMINISTRATOR') {
-    return (v & bit) === bit ? v & ~bit : v | bit;
+    next = (v & bit) === bit ? v & ~bit : v | bit;
+  } else if ((v & Permissions.ADMINISTRATOR) === Permissions.ADMINISTRATOR) {
+    next = (v & ~Permissions.ADMINISTRATOR) & ~bit;
+  } else {
+    next = (v & bit) === bit ? v & ~bit : v | bit;
   }
-  if ((v & Permissions.ADMINISTRATOR) === Permissions.ADMINISTRATOR) {
-    return (v & ~Permissions.ADMINISTRATOR) & ~bit;
+  // Send Messages requires Read Messages (turning Read off also clears Send)
+  if (permKey === 'READ_MESSAGES' && (next & Permissions.READ_MESSAGES) === 0) {
+    next &= ~Permissions.SEND_MESSAGES;
   }
-  return (v & bit) === bit ? v & ~bit : v | bit;
+  if ((next & Permissions.SEND_MESSAGES) === Permissions.SEND_MESSAGES) {
+    next |= Permissions.READ_MESSAGES;
+  }
+  return next >>> 0;
 }
 
 export function computeServerPermissions(server, member) {
   if (!server || !member) return 0;
-  const userId = typeof member.user === 'object' ? member.user._id : member.user;
-  if (server.owner === userId) return ALL_PERMISSIONS;
+  const userId = typeof member.user === 'object' && member.user != null ? member.user._id : member.user;
+  if (String(server.owner) === String(userId)) return ALL_PERMISSIONS;
 
-  let perms = server.default_permissions ?? DEFAULT_EVERYONE_PERMS;
+  let perms = coerceConsistentServerPermissions(server.default_permissions ?? DEFAULT_EVERYONE_PERMS);
   const roles = server.roles || {};
   for (const roleId of (member.roles || [])) {
     const role = roles[roleId];
     if (role && typeof role.permissions === 'number') {
-      perms |= role.permissions;
+      perms |= coerceConsistentServerPermissions(role.permissions);
     }
   }
   if (perms & Permissions.ADMINISTRATOR) return ALL_PERMISSIONS;
@@ -114,8 +137,8 @@ export function computeServerPermissions(server, member) {
 
 export function computeChannelPermissions(server, member, channel) {
   if (!server || !member || !channel) return 0;
-  const userId = typeof member.user === 'object' ? member.user._id : member.user;
-  if (server.owner === userId) return ALL_PERMISSIONS;
+  const userId = typeof member.user === 'object' && member.user != null ? member.user._id : member.user;
+  if (String(server.owner) === String(userId)) return ALL_PERMISSIONS;
 
   let perms = computeServerPermissions(server, member);
   if (perms & Permissions.ADMINISTRATOR) return ALL_PERMISSIONS;

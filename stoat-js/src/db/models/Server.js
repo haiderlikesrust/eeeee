@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { DEFAULT_EVERYONE_PERMS } from '../../permissions.js';
 
 const fileSchema = new mongoose.Schema({
   _id: String, tag: String, filename: String, metadata: mongoose.Schema.Types.Mixed,
@@ -28,7 +29,7 @@ const serverSchema = new mongoose.Schema({
   channels: [{ type: String, ref: 'Channel' }],
   categories: [categorySchema],
   roles: { type: mongoose.Schema.Types.Mixed, default: {} },
-  default_permissions: { type: Number, default: 64160 },
+  default_permissions: { type: Number, default: DEFAULT_EVERYONE_PERMS },
   icon: fileSchema,
   banner: fileSchema,
   flags: Number,
