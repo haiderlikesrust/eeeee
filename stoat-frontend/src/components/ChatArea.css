@@ -696,30 +696,72 @@
   border-radius: 0;
   border: none;
   border-bottom: 1px solid var(--input-border);
+  overflow: hidden;
 }
 
-.chat-input-composer .chat-input-wrap {
+.chat-input-composer .chat-input-row {
   border: none;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Inset from composer corners: overflow:hidden + radius-xl clips flush content */
+  padding: 0 22px 8px 22px;
+  min-width: 0;
+  overflow: visible;
 }
 
-.chat-input-composer .chat-input-wrap:focus-within {
+.chat-input-composer .chat-input-row:focus-within {
   border: none;
   box-shadow: none;
 }
 
-/* Leading actions + text field share one row; input must shrink or overflow:hidden on composer clips the mic */
+/* Icons live outside the shrinking text shell so the input cannot cover them */
 .chat-input-leading {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
   flex-shrink: 0;
-  gap: 0;
+  flex-grow: 0;
+  gap: 4px;
+  min-width: max-content;
+  width: max-content;
+  position: relative;
+  z-index: 2;
+  padding-right: 2px;
 }
 
-.chat-input-wrap .chat-voice-btn {
+.chat-input-field-shell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+}
+
+/* Isolate native text field so it cannot paint over attach/mic (Chrome flex + input quirk) */
+.chat-input-text-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.chat-input-text-cell .chat-input {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  max-width: 100%;
+}
+
+.chat-input-row .chat-voice-btn {
   flex: 0 0 auto;
   flex-shrink: 0;
   min-width: 36px;
@@ -730,11 +772,34 @@
   appearance: none;
 }
 
-.chat-input-wrap .chat-voice-btn svg {
+.chat-input-row .chat-voice-btn svg {
   display: block;
   width: 20px;
   height: 20px;
   flex-shrink: 0;
+}
+
+.chat-input-row .chat-attach-btn {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  min-width: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
+  overflow: visible;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.chat-input-row .chat-attach-btn svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.chat-input-leading .chat-attach-btn,
+.chat-input-leading .chat-voice-btn {
+  margin-right: 0;
 }
 
 /* Autocomplete popup */
@@ -1145,29 +1210,19 @@
   margin-right: 4px;
 }
 
-.chat-attach-btn:hover {
+.chat-attach-btn:hover:not(:disabled) {
   color: var(--accent);
   background: var(--bg-modifier-hover);
+}
+
+.chat-attach-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .chat-input-area {
   padding: 0 20px 20px;
   flex-shrink: 0;
-}
-
-.chat-input-wrap {
-  background: var(--input-bg);
-  border: 1px solid var(--input-border);
-  border-radius: var(--radius-xl);
-  display: flex;
-  align-items: center;
-  padding: 0 20px;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.chat-input-wrap:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-muted);
 }
 
 .chat-input {
@@ -1362,8 +1417,9 @@
     padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
-  .chat-input-wrap {
-    padding: 0 12px;
+  .chat-input-composer .chat-input-row {
+    padding: 0 14px 8px 14px;
+    gap: 4px;
   }
 
   .chat-send-btn {

@@ -1536,8 +1536,20 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               </div>
             )}
             <FormattingToolbar inputRef={inputRef} value={input} onChange={setInput} />
-            <div className="chat-input-wrap">
+            <div className="chat-input-row">
             <div className="chat-input-leading">
+            <button
+              type="button"
+              className="chat-attach-btn"
+              onClick={() => canAttach && fileInputRef.current?.click()}
+              disabled={!canAttach}
+              title={canAttach ? 'Attach file' : 'You do not have permission to attach files'}
+              aria-label={canAttach ? 'Attach file' : 'Attach file (not allowed)'}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
+                <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+              </svg>
+            </button>
             <button
               type="button"
               className={`chat-voice-btn${voice.phase === 'recording' ? ' recording' : ''}`}
@@ -1550,16 +1562,13 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               aria-label="Record voice message"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden focusable="false">
-                <path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
+                <path fill="currentColor" d="M12 14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2s-2 .9-2 2v6c0 1.1.9 2 2 2zm5-2h-2c0 2.76-2.24 5-5 5s-5-2.24-5-5H6c0 3.53 2.61 6.43 6 6.92V20h2v-1.08c3.39-.49 6-3.39 6-6.92z" />
               </svg>
             </button>
-            {canAttach && (
-              <button type="button" className="chat-attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach file">
-                <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>
-              </button>
-            )}
             </div>
+            <div className="chat-input-field-shell">
             <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileSelect} />
+            <div className="chat-input-text-cell">
             <input
               ref={inputRef}
               className="chat-input"
@@ -1572,6 +1581,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               placeholder={slowmodeCooldown > 0 ? `Slowmode: ${slowmodeCooldown}s remaining...` : uploading ? 'Uploading...' : `Message ${channel?.channel_type === 'DirectMessage' ? '@' : '#'}${channelDisplayName}`}
               disabled={uploading || slowmodeCooldown > 0}
             />
+            </div>
             <button type="button" className="chat-emoji-btn" onClick={(e) => { e.stopPropagation(); setShowInputEmoji(!showInputEmoji); }} title="Emojis">
               <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>
             </button>
@@ -1591,6 +1601,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                 </svg>
               </button>
             )}
+            </div>
           </div>
           </div>
           {showInputEmoji && (

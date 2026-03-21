@@ -226,7 +226,7 @@
   align-items: center;
   flex: 0 0 auto;
   flex-shrink: 0;
-  gap: 2px;
+  gap: 4px;
 }
 
 .thread-attach-btn {

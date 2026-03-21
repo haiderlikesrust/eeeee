@@ -236,6 +236,11 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
         )}
         <div className="thread-input-wrap">
           <div className="thread-input-leading">
+          <button type="button" className="thread-attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach file" aria-label="Attach file">
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+              <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+            </svg>
+          </button>
           <button
             type="button"
             className={`thread-voice-btn${voice.phase === 'recording' ? ' recording' : ''}`}
@@ -248,11 +253,8 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
             aria-label="Record voice message"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden focusable="false">
-              <path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
+              <path fill="currentColor" d="M12 14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2s-2 .9-2 2v6c0 1.1.9 2 2 2zm5-2h-2c0 2.76-2.24 5-5 5s-5-2.24-5-5H6c0 3.53 2.61 6.43 6 6.92V20h2v-1.08c3.39-.49 6-3.39 6-6.92z" />
             </svg>
-          </button>
-          <button type="button" className="thread-attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach file">
-            <svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 015 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5a2.5 2.5 0 005 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>
           </button>
           </div>
           <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileSelect} />

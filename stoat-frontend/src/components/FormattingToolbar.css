@@ -8,7 +8,6 @@
   border-bottom: 1px solid var(--input-border);
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   box-shadow: none;
-  contain: layout style;
 }
 
 .formatting-toolbar--collapsed {
