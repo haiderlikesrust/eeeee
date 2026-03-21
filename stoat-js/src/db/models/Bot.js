@@ -12,6 +12,11 @@ const botSchema = new mongoose.Schema({
   terms_of_service_url: { type: String, default: '' },
   privacy_policy_url: { type: String, default: '' },
   flags: Number,
+  /** Slash command definitions (name unique per bot; cross-bot uniqueness enforced in shared servers). */
+  slash_commands: [{
+    name: { type: String, required: true },
+    description: { type: String, default: '' },
+  }],
 }, { id: false });
 
 botSchema.index({ owner: 1 });

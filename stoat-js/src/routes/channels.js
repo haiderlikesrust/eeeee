@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { ulid } from 'ulid';
 import crypto from 'crypto';
 import {
-  Channel, Message, Member, User, Invite, Webhook, ChannelUnread, Server,
+  Channel, Message, Member, User, Invite, Webhook, ChannelUnread, Server, Bot, WhiteboardSession,
 } from '../db/models/index.js';
+import { createRoom } from '../whiteboardRooms.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { toPublicUser } from '../publicUser.js';
 import { broadcastToChannel, broadcastToServer, GatewayIntents, isUserOnlineDisplay } from '../events.js';
@@ -13,6 +14,11 @@ import {
   Permissions, ALL_PERMISSIONS, computeChannelPermissions, computeServerPermissions, hasPermission,
   sameId, isVoiceMessageAttachment,
 } from '../permissions.js';
+import { parseSlashContent } from '../slash/parse.js';
+import { runBuiltinHandler, listBuiltinCommandsForApi } from '../slash/builtin.js';
+import { findBotsWithSlashCommand } from '../slash/resolve.js';
+import { postSlashInteraction } from '../slash/botInteraction.js';
+import { getOfficialClawUserId } from '../officialClaw.js';
 
 const router = Router();
 
@@ -145,6 +151,38 @@ router.get('/:target/permissions', authMiddleware(), async (req, res) => {
   if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
   const perms = computeChannelPermissions(server, member, ch);
   res.json({ permissions: perms });
+});
+
+// GET /channels/:target/commands — built-in + bot slash commands for this server (discovery / autocomplete)
+router.get('/:target/commands', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target).lean();
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+  const builtin = listBuiltinCommandsForApi();
+  const bots = [];
+  if (ch.server) {
+    const members = await Member.find({ server: ch.server }).lean();
+    const userIds = members.map((m) => m.user);
+    const botDocs = await Bot.find({ _id: { $in: userIds } }).lean();
+    const users = await User.find({ _id: { $in: botDocs.map((b) => b._id) } })
+      .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+      .lean();
+    const byUser = Object.fromEntries(users.map((u) => [u._id, u]));
+    for (const b of botDocs) {
+      const cmds = (b.slash_commands || []).filter((c) => c.name);
+      if (cmds.length === 0) continue;
+      const u = byUser[b._id];
+      bots.push({
+        bot_id: b._id,
+        username: u?.username ?? b._id,
+        display_name: u?.display_name || null,
+        discriminator: u?.discriminator ?? null,
+        commands: cmds.map((c) => ({ name: c.name, description: c.description || '' })),
+      });
+    }
+  }
+  res.json({ builtin, bots });
 });
 
 // PATCH /channels/:target
@@ -356,14 +394,339 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
   // Normalize replies: accept both string[] and {id, mention}[]
   const rawReplies = req.body?.replies || [];
   const replyIds = rawReplies.map((r) => (typeof r === 'object' ? r.id : r)).filter(Boolean);
+  const contentStr = String(content).slice(0, 2000);
+  const attachments = req.body?.attachments || [];
+  const embedsIn = req.body?.embeds || [];
+  const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+  const hasEmbedIn = Array.isArray(embedsIn) && embedsIn.length > 0;
+  const parsedSlash = parseSlashContent(contentStr);
+  const slashOnly = parsedSlash && !hasAttachments && !hasEmbedIn && !req.body?.masquerade;
+
+  if (slashOnly && parsedSlash.name === 'whiteboard') {
+    const clawId = getOfficialClawUserId();
+    if (!ch.server) {
+      const msgId = ulid();
+      const userMsg = await Message.create({
+        _id: msgId,
+        channel: ch._id,
+        author: req.userId,
+        content: contentStr,
+        attachments: [],
+        embeds: [],
+        mentions: req.body?.mentions || [],
+        replies: replyIds,
+        masquerade: req.body?.masquerade || undefined,
+        nonce: req.body?.nonce,
+      });
+      ch.last_message_id = msgId;
+      await ch.save();
+      const clawMsgId = ulid();
+      const clawMsg = await Message.create({
+        _id: clawMsgId,
+        channel: ch._id,
+        author: clawId,
+        content: 'Use `/whiteboard` in a server text channel.',
+        embeds: [],
+        mentions: [],
+        replies: [],
+      });
+      ch.last_message_id = clawMsgId;
+      await ch.save();
+      const author = await User.findById(req.userId)
+        .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+        .lean();
+      const authorMap = { [req.userId]: author };
+      const replyContext = await fetchReplyContext(replyIds, authorMap);
+      const payload = messageToJson(userMsg, authorMap, replyContext);
+      res.status(201).json(payload);
+      void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
+        eventIntent: GatewayIntents.GUILD_MESSAGES,
+      }).catch(() => {});
+      notifyPushForNewMessage(ch, req.userId, payload);
+      const clawUser = await User.findById(clawId)
+        .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+        .lean();
+      const clawPayload = messageToJson(clawMsg, { [clawId]: clawUser }, null);
+      void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: clawPayload }, {
+        eventIntent: GatewayIntents.GUILD_MESSAGES,
+      }).catch(() => {});
+      notifyPushForNewMessage(ch, clawId, clawPayload);
+      return;
+    }
+    const sessionId = ulid();
+    await WhiteboardSession.create({
+      _id: sessionId,
+      channel: ch._id,
+      server: ch.server,
+      owner: req.userId,
+      status: 'open',
+    });
+    createRoom(sessionId, { ownerId: req.userId, channelId: ch._id, serverId: ch.server });
+    const msgId = ulid();
+    const userMsg = await Message.create({
+      _id: msgId,
+      channel: ch._id,
+      author: req.userId,
+      content: contentStr,
+      attachments: [],
+      embeds: [],
+      mentions: req.body?.mentions || [],
+      replies: replyIds,
+      masquerade: req.body?.masquerade || undefined,
+      nonce: req.body?.nonce,
+    });
+    ch.last_message_id = msgId;
+    await ch.save();
+    const ownerDoc = await User.findById(req.userId).select('display_name username').lean();
+    const ownerName = ownerDoc?.display_name || ownerDoc?.username || 'Someone';
+    const clawMsgId = ulid();
+    const clawMsg = await Message.create({
+      _id: clawMsgId,
+      channel: ch._id,
+      author: clawId,
+      content: `**${ownerName}** started a whiteboard — Click **Join** below to draw together in real time. When finished, the person who started the session can export a snapshot.`,
+      embeds: [{
+        type: 'whiteboard_invite',
+        session_id: sessionId,
+        channel_id: ch._id,
+        server_id: ch.server,
+        owner_id: req.userId,
+        owner_display_name: ownerName,
+        session_status: 'open',
+      }],
+      mentions: [],
+      replies: [],
+    });
+    await WhiteboardSession.updateOne({ _id: sessionId }, { $set: { invite_message_id: clawMsgId } });
+    ch.last_message_id = clawMsgId;
+    await ch.save();
+    void broadcastToChannel(ch._id, {
+      type: 'WhiteboardSessionOpen',
+      d: {
+        session_id: sessionId,
+        channel_id: ch._id,
+        server_id: ch.server,
+        owner_id: req.userId,
+      },
+    }).catch(() => {});
+    const author = await User.findById(req.userId)
+      .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+      .lean();
+    const authorMap = { [req.userId]: author };
+    const replyContext = await fetchReplyContext(replyIds, authorMap);
+    const payload = messageToJson(userMsg, authorMap, replyContext);
+    payload.whiteboard_session = {
+      session_id: sessionId,
+      owner_id: req.userId,
+      channel_id: ch._id,
+    };
+    res.status(201).json(payload);
+    void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
+      eventIntent: GatewayIntents.GUILD_MESSAGES,
+    }).catch(() => {});
+    notifyPushForNewMessage(ch, req.userId, payload);
+    const clawUser = await User.findById(clawId)
+      .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+      .lean();
+    const clawPayload = messageToJson(clawMsg, { [clawId]: clawUser }, null);
+    void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: clawPayload }, {
+      eventIntent: GatewayIntents.GUILD_MESSAGES,
+    }).catch(() => {});
+    notifyPushForNewMessage(ch, clawId, clawPayload);
+    if (contentStr && /https?:\/\//i.test(contentStr)) {
+      fetchLinkPreviewsForContent(contentStr, 2)
+        .then((linkPreviews) => {
+          if (linkPreviews.length > 0) {
+            return Message.updateOne({ _id: msgId }, { $set: { link_previews: linkPreviews } });
+          }
+        })
+        .catch(() => {});
+    }
+    return;
+  }
+
+  if (slashOnly) {
+    const builtinRes = await runBuiltinHandler(parsedSlash.name, {
+      args: parsedSlash.args,
+      userId: req.userId,
+      channelId: ch._id,
+      serverId: ch.server || undefined,
+    });
+    if (builtinRes) {
+      const msgId = ulid();
+      const msg = await Message.create({
+        _id: msgId,
+        channel: ch._id,
+        author: req.userId,
+        content: contentStr,
+        attachments: [],
+        embeds: [],
+        mentions: req.body?.mentions || [],
+        replies: replyIds,
+        masquerade: req.body?.masquerade || undefined,
+        nonce: req.body?.nonce,
+      });
+      ch.last_message_id = msgId;
+      await ch.save();
+      const clawId = getOfficialClawUserId();
+      const clawMsgId = ulid();
+      const clawContent = String(builtinRes.content ?? '').slice(0, 2000);
+      const clawMsg = await Message.create({
+        _id: clawMsgId,
+        channel: ch._id,
+        author: clawId,
+        content: clawContent,
+        embeds: Array.isArray(builtinRes.embeds) ? builtinRes.embeds : [],
+        mentions: [],
+        replies: [],
+      });
+      ch.last_message_id = clawMsgId;
+      await ch.save();
+
+      const author = await User.findById(req.userId)
+        .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+        .lean();
+      const authorMap = { [req.userId]: author };
+      const replyContext = await fetchReplyContext(replyIds, authorMap);
+      const payload = messageToJson(msg, authorMap, replyContext);
+      res.status(201).json(payload);
+      void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
+        eventIntent: GatewayIntents.GUILD_MESSAGES,
+      }).catch(() => {});
+      notifyPushForNewMessage(ch, req.userId, payload);
+
+      const clawUser = await User.findById(clawId)
+        .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+        .lean();
+      const clawPayload = messageToJson(clawMsg, { [clawId]: clawUser }, null);
+      void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: clawPayload }, {
+        eventIntent: GatewayIntents.GUILD_MESSAGES,
+      }).catch(() => {});
+      notifyPushForNewMessage(ch, clawId, clawPayload);
+
+      if (contentStr && /https?:\/\//i.test(contentStr)) {
+        fetchLinkPreviewsForContent(contentStr, 2)
+          .then((linkPreviews) => {
+            if (linkPreviews.length > 0) {
+              return Message.updateOne({ _id: msgId }, { $set: { link_previews: linkPreviews } });
+            }
+          })
+          .catch(() => {});
+      }
+      return;
+    }
+    if (ch.server) {
+      const botMatches = await findBotsWithSlashCommand(ch.server, parsedSlash.name);
+      if (botMatches.length > 1) {
+        return res.status(400).json({
+          type: 'AmbiguousSlashCommand',
+          error: 'Multiple bots define this command; use a unique name per server.',
+        });
+      }
+      if (botMatches.length === 1) {
+        const bot = botMatches[0];
+        const url = String(bot.interactions_url || '').trim();
+        if (url) {
+          const msgId = ulid();
+          const msg = await Message.create({
+            _id: msgId,
+            channel: ch._id,
+            author: req.userId,
+            content: contentStr,
+            attachments: [],
+            embeds: [],
+            mentions: req.body?.mentions || [],
+            replies: replyIds,
+            masquerade: req.body?.masquerade || undefined,
+            nonce: req.body?.nonce,
+          });
+          ch.last_message_id = msgId;
+          await ch.save();
+
+          const author = await User.findById(req.userId)
+            .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+            .lean();
+          const authorMap = { [req.userId]: author };
+          const replyContext = await fetchReplyContext(replyIds, authorMap);
+          const payload = messageToJson(msg, authorMap, replyContext);
+
+          const interactionId = ulid();
+          const interactionToken = crypto.randomBytes(24).toString('hex');
+          const interactionPayload = {
+            version: 1,
+            type: 'application_command',
+            id: interactionId,
+            token: interactionToken,
+            channel_id: ch._id,
+            guild_id: ch.server,
+            user: { id: req.userId, username: author?.username },
+            command: { name: parsedSlash.name, args: parsedSlash.args },
+            message_id: msgId,
+          };
+          const botHttp = await postSlashInteraction(url, bot.token, interactionPayload);
+          if (!botHttp.ok) {
+            void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
+              eventIntent: GatewayIntents.GUILD_MESSAGES,
+            }).catch(() => {});
+            notifyPushForNewMessage(ch, req.userId, payload);
+            return res.status(502).json({
+              type: 'FailedDependency',
+              error: botHttp.error,
+              user_message: payload,
+            });
+          }
+
+          const botMsgId = ulid();
+          const botMsg = await Message.create({
+            _id: botMsgId,
+            channel: ch._id,
+            author: bot._id,
+            content: botHttp.data.content,
+            embeds: botHttp.data.embeds || [],
+            mentions: [],
+            replies: [],
+          });
+          ch.last_message_id = botMsgId;
+          await ch.save();
+
+          res.status(201).json(payload);
+          void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
+            eventIntent: GatewayIntents.GUILD_MESSAGES,
+          }).catch(() => {});
+          notifyPushForNewMessage(ch, req.userId, payload);
+
+          const botAuthor = await User.findById(bot._id)
+            .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+            .lean();
+          const botMsgPayload = messageToJson(botMsg, { [bot._id]: botAuthor }, null);
+          void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: botMsgPayload }, {
+            eventIntent: GatewayIntents.GUILD_MESSAGES,
+          }).catch(() => {});
+          notifyPushForNewMessage(ch, bot._id, botMsgPayload);
+
+          if (contentStr && /https?:\/\//i.test(contentStr)) {
+            fetchLinkPreviewsForContent(contentStr, 2)
+              .then((linkPreviews) => {
+                if (linkPreviews.length > 0) {
+                  return Message.updateOne({ _id: msgId }, { $set: { link_previews: linkPreviews } });
+                }
+              })
+              .catch(() => {});
+          }
+          return;
+        }
+      }
+    }
+  }
+
   const msgId = ulid();
   const msg = await Message.create({
     _id: msgId,
     channel: ch._id,
     author: req.userId,
-    content: String(content).slice(0, 2000),
-    attachments: req.body?.attachments || [],
-    embeds: req.body?.embeds || [],
+    content: contentStr,
+    attachments,
+    embeds: embedsIn,
     mentions: req.body?.mentions || [],
     replies: replyIds,
     masquerade: req.body?.masquerade || undefined,
@@ -385,8 +748,8 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
   notifyPushForNewMessage(ch, req.userId, payload);
 
   // Fetch link previews after response; avoids blocking the request (up to ~3.5s per URL)
-  if (content && /https?:\/\//i.test(content)) {
-    fetchLinkPreviewsForContent(content, 2)
+  if (contentStr && /https?:\/\//i.test(contentStr)) {
+    fetchLinkPreviewsForContent(contentStr, 2)
       .then((linkPreviews) => {
         if (linkPreviews.length > 0) {
           return Message.updateOne({ _id: msgId }, { $set: { link_previews: linkPreviews } });

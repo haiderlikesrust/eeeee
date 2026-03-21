@@ -5,6 +5,7 @@ import { useWS } from '../context/WebSocketContext';
 import { useMobile } from '../context/MobileContext';
 import { useUnread } from '../context/UnreadContext';
 import { useNotifications } from '../context/NotificationContext';
+import { useToast } from '../context/ToastContext';
 import { useOfeed } from '../context/OfeedContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import { Permissions, hasPermission, ALL_PERMISSIONS } from '../utils/permissions';
@@ -15,6 +16,7 @@ import ProfileCard from './ProfileCard';
 import Lightbox from './Lightbox';
 import FormattingToolbar from './FormattingToolbar';
 import ThreadPanel from './ThreadPanel';
+import WhiteboardModal from './WhiteboardModal';
 import ServerOwnerCrown from './ServerOwnerCrown';
 import { showServerOwnerCrownForUser } from '../utils/serverOwnerCrownDisplay';
 import OfeedShareLinkCard from './OfeedShareLinkCard';
@@ -25,6 +27,7 @@ import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import VoiceRecordingBar from './VoiceRecordingBar';
 import VoiceMessageAttachment from './VoiceMessageAttachment';
 import { isVoiceAttachment, withVoiceMetadata, extensionForVoiceMime } from '../utils/voiceMessage';
+import { SLASH_BUILTIN_FALLBACK } from '../utils/slashBuiltins';
 import './VoiceMessages.css';
 import './ChatArea.css';
 
@@ -75,12 +78,31 @@ function isEmojiOnly(content) {
   return emojiCount > 0 && emojiCount <= 27;
 }
 
-function renderMessageEmbeds(embeds) {
+function renderMessageEmbeds(embeds, { onJoinWhiteboard } = {}) {
   if (!Array.isArray(embeds) || embeds.length === 0) return null;
   return (
     <div className="msg-embeds">
       {embeds.map((embed, i) => {
         if (!embed || typeof embed !== 'object') return null;
+        if (embed.type === 'whiteboard_invite' && embed.session_id) {
+          const ended = embed.session_status === 'closed' || embed.session_status === 'ended';
+          if (ended) {
+            return (
+              <div key={i} className="msg-embed whiteboard-invite-embed whiteboard-invite-ended">
+                <span className="whiteboard-invite-label">Whiteboard ended</span>
+                <span className="whiteboard-invite-ended-hint">This session is closed.</span>
+              </div>
+            );
+          }
+          return (
+            <div key={i} className="msg-embed whiteboard-invite-embed">
+              <span className="whiteboard-invite-label">Live whiteboard</span>
+              <button type="button" className="whiteboard-join-btn" onClick={() => onJoinWhiteboard?.(embed)}>
+                Join whiteboard
+              </button>
+            </div>
+          );
+        }
         const color = Number.isFinite(embed.color)
           ? `#${Math.max(0, Math.min(0xffffff, Number(embed.color))).toString(16).padStart(6, '0')}`
           : null;
@@ -307,6 +329,7 @@ const TYPING_STOP_DELAY_MS = 3000;
 
 export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChannelAccessLost }) {
   const { user } = useAuth();
+  const toast = useToast();
   const { send, on } = useWS();
   const { isMobile, openChannelSidebar, openMemberSidebar } = useMobile();
   const { ackChannel } = useUnread();
@@ -347,7 +370,11 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   const [replyingTo, setReplyingTo] = useState(null);
   const [slowmodeCooldown, setSlowmodeCooldown] = useState(0);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  /** GET /channels/:id/commands — built-in + bot slash commands for autocomplete */
+  const [slashCommandsData, setSlashCommandsData] = useState({ builtin: [], bots: [] });
   const [openThread, setOpenThread] = useState(null);
+  const [whiteboardOpen, setWhiteboardOpen] = useState(null);
+  const [whiteboardBanner, setWhiteboardBanner] = useState(null);
   const bottomRef = useRef(null);
   const pollRef = useRef(null);
   /** Ignore HTTP results if user switched channel before the request finished. */
@@ -476,9 +503,18 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
 
   useEffect(() => {
     if (!channelId) return;
+    get(`/channels/${channelId}/commands`)
+      .then((d) => setSlashCommandsData({ builtin: d?.builtin || [], bots: d?.bots || [] }))
+      .catch(() => setSlashCommandsData({ builtin: [], bots: [] }));
+  }, [channelId]);
+
+  useEffect(() => {
+    if (!channelId) return;
     setLoading(true);
     setPerms(0);
     setMessages([]);
+    setWhiteboardOpen(null);
+    setWhiteboardBanner(null);
     setShowSearch(false);
     setShowPinned(false);
     setAutocomplete(null);
@@ -511,6 +547,44 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     });
     return () => { unsubStart(); unsubStop(); };
   }, [channelId, user ? user._id : null, on]);
+
+  const openWhiteboardFromEmbed = useCallback((embed) => {
+    if (!embed?.session_id) return;
+    setWhiteboardOpen({
+      sessionId: embed.session_id,
+      ownerId: embed.owner_id,
+      channelId: embed.channel_id || channelId,
+    });
+  }, [channelId]);
+
+  const resolveWhiteboardDisplayName = useCallback((uid) => {
+    const m = mentionDirectory?.byId?.[uid];
+    const u = m?.user;
+    if (m?.nickname) return m.nickname;
+    if (u?.display_name) return u.display_name;
+    if (u?.username) return u.username;
+    const s = String(uid ?? '');
+    return s.length > 6 ? `…${s.slice(-4)}` : s || '?';
+  }, [mentionDirectory]);
+
+  useEffect(() => {
+    if (!channelId || !on) return;
+    const unsubOpen = on('WhiteboardSessionOpen', (d) => {
+      if (!d || String(d.channel_id) !== String(channelId)) return;
+      if (user?._id && String(d.owner_id) === String(user._id)) return;
+      setWhiteboardBanner({ session_id: d.session_id, owner_id: d.owner_id, channel_id: d.channel_id });
+      toast.success('A whiteboard session started in this channel');
+    });
+    const unsubClosed = on('WhiteboardSessionClosed', (d) => {
+      if (!d || String(d.channel_id) !== String(channelId)) return;
+      setWhiteboardBanner((b) => (b && String(b.session_id) === String(d.session_id) ? null : b));
+      setWhiteboardOpen((w) => (w && String(w.sessionId) === String(d.session_id) ? null : w));
+    });
+    return () => {
+      unsubOpen();
+      unsubClosed();
+    };
+  }, [channelId, on, user?._id, toast]);
 
   useEffect(() => {
     if (!channelId || !on) return;
@@ -605,8 +679,52 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     }
   }, [uploading]);
 
-  // Autocomplete logic (emoji :query and @mention)
+  // Autocomplete logic (slash commands, @mention, :emoji)
   useEffect(() => {
+    const leadingWs = input.match(/^\s*/)?.[0]?.length ?? 0;
+    const t = input.slice(leadingWs);
+    if (t.startsWith('/') && !t.startsWith('//')) {
+      const rest = t.slice(1);
+      if (!/\s/.test(rest) && /^[a-z0-9_-]*$/i.test(rest)) {
+        const query = rest.toLowerCase();
+        const slashSlashIndex = leadingWs;
+        const flat = [];
+        const builtinList =
+          slashCommandsData.builtin && slashCommandsData.builtin.length > 0
+            ? slashCommandsData.builtin
+            : SLASH_BUILTIN_FALLBACK;
+        for (const b of builtinList) {
+          flat.push({ type: 'slash', kind: 'builtin', name: b.name, description: b.description || '' });
+        }
+        for (const bot of slashCommandsData.bots || []) {
+          const botLabel = (bot.display_name || bot.username || '').trim() || bot.bot_id || 'Bot';
+          for (const c of bot.commands || []) {
+            flat.push({
+              type: 'slash',
+              kind: 'bot',
+              name: c.name,
+              description: c.description || '',
+              botId: bot.bot_id,
+              botUsername: bot.username,
+              botDisplayName: botLabel,
+              botDiscriminator: bot.discriminator,
+            });
+          }
+        }
+        const filtered = flat.filter((x) => x.name.startsWith(query)).slice(0, 25);
+        if (filtered.length > 0) {
+          setAutocomplete({
+            mode: 'slash',
+            items: filtered,
+            slashSlashIndex,
+            replaceEnd: input.length,
+            colonIdx: slashSlashIndex,
+          });
+          setAcSelected(0);
+          return;
+        }
+      }
+    }
     // Check for @mention autocomplete (query runs until whitespace; match display name / username / nickname by prefix)
     const atIdx = input.lastIndexOf('@');
     if (atIdx >= 0) {
@@ -720,7 +838,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       }
     }
     setAutocomplete(null);
-  }, [input, customEmojis, mentionDirectory, roleDirectory, channel]);
+  }, [input, customEmojis, mentionDirectory, roleDirectory, channel, slashCommandsData]);
 
   const applyAutocomplete = (item) => {
     if (!autocomplete) return;
@@ -736,6 +854,13 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       insert = `<@${item.id}>`;
     } else if (item.type === 'everyone') {
       insert = '@everyone';
+    } else if (item.type === 'slash') {
+      const start = autocomplete.slashSlashIndex ?? autocomplete.colonIdx;
+      const end = autocomplete.replaceEnd ?? input.length;
+      setInput(input.slice(0, start) + `/${item.name} ` + input.slice(end));
+      setAutocomplete(null);
+      inputRef.current?.focus();
+      return;
     } else {
       insert = item.name || '';
     }
@@ -868,15 +993,32 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
         }
         return [...prev, msg];
       });
+      if (msg?.whiteboard_session?.session_id) {
+        setWhiteboardOpen({
+          sessionId: msg.whiteboard_session.session_id,
+          ownerId: msg.whiteboard_session.owner_id,
+          channelId: msg.whiteboard_session.channel_id || channelId,
+        });
+      }
       if (channel?.slowmode > 0) setSlowmodeCooldown(channel.slowmode);
     } catch (err) {
-      if (optimisticId) {
+      if (err?.type === 'FailedDependency' && err?.user_message) {
+        setMessages((prev) => {
+          const withoutOpt = optimisticId ? prev.filter((m) => m._id !== optimisticId) : prev;
+          const um = err.user_message;
+          if (withoutOpt.some((m) => m._id === um._id)) return withoutOpt;
+          return [...withoutOpt, um];
+        });
+        toast.error(err?.error || 'Slash command failed');
+      } else if (optimisticId) {
         setMessages((prev) => prev.filter((m) => m._id !== optimisticId));
       }
       if (err?.retry_after) setSlowmodeCooldown(err.retry_after);
-      setInput(contentSnapshot);
-      if (filesSnapshot.length > 0) setPendingFiles(filesSnapshot);
-      if (replySnap) setReplyingTo(replySnap);
+      if (err?.type !== 'FailedDependency' || !err?.user_message) {
+        setInput(contentSnapshot);
+        if (filesSnapshot.length > 0) setPendingFiles(filesSnapshot);
+        if (replySnap) setReplyingTo(replySnap);
+      }
     }
     focusInputAfterSendRef.current = true;
     setUploading(false);
@@ -1252,6 +1394,29 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
         </div>
       )}
 
+      {whiteboardBanner && channel?.server && (
+        <div className="whiteboard-channel-banner" role="status">
+          <span>Whiteboard active in this channel</span>
+          <button
+            type="button"
+            className="whiteboard-banner-join"
+            onClick={() => {
+              setWhiteboardOpen({
+                sessionId: whiteboardBanner.session_id,
+                ownerId: whiteboardBanner.owner_id,
+                channelId: whiteboardBanner.channel_id,
+              });
+              setWhiteboardBanner(null);
+            }}
+          >
+            Join
+          </button>
+          <button type="button" className="whiteboard-banner-dismiss" onClick={() => setWhiteboardBanner(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {showPinned && (
         <div className="pinned-panel">
           <div className="pinned-header">Pinned Messages</div>
@@ -1342,7 +1507,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                         {renderMessageContent(msg.content, customEmojis, user, mentionDirectory, openMentionCard, roleDirectory, setLightboxSrc, msg.link_previews)}
                       </div>
                     )}
-                    {renderMessageEmbeds(msg.embeds)}
+                    {renderMessageEmbeds(msg.embeds, { onJoinWhiteboard: openWhiteboardFromEmbed })}
                     {renderLinkPreviews(msg.link_previews)}
                     {msg.attachments && msg.attachments.length > 0 && (
                       <div className="msg-attachments">
@@ -1518,19 +1683,47 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
           <div className="chat-input-composer">
             {autocomplete && (
               <div
-                className={`autocomplete-popup${autocomplete.mode === 'mention' ? ' autocomplete-popup-mention' : ''}`}
+                className={`autocomplete-popup${autocomplete.mode === 'mention' ? ' autocomplete-popup-mention' : ''}${autocomplete.mode === 'slash' ? ' autocomplete-popup-slash' : ''}`}
                 role="listbox"
-                aria-label={autocomplete.mode === 'mention' ? 'Mention users and roles' : 'Emoji suggestions'}
+                aria-label={
+                  autocomplete.mode === 'mention'
+                    ? 'Mention users and roles'
+                    : autocomplete.mode === 'slash'
+                      ? 'Slash commands'
+                      : 'Emoji suggestions'
+                }
               >
                 {autocomplete.items.map((item, i) => (
                   <div
-                    key={item.type === 'user' ? `u-${item.id}` : item.type === 'role' ? `r-${item.id}` : `${item.type}-${i}`}
+                    key={item.type === 'slash' ? `s-${item.kind}-${item.name}-${item.botId || 'builtin'}-${i}` : item.type === 'user' ? `u-${item.id}` : item.type === 'role' ? `r-${item.id}` : `${item.type}-${i}`}
                     role="option"
                     aria-selected={i === acSelected}
-                    className={`ac-item ${i === acSelected ? 'selected' : ''}`}
+                    className={`ac-item${item.type === 'slash' ? ' ac-item-slash' : ''} ${i === acSelected ? 'selected' : ''}`}
                     onMouseDown={(e) => { e.preventDefault(); applyAutocomplete(item); }}
                   >
-                  {item.type === 'unicode' ? (
+                  {item.type === 'slash' ? (
+                    <div className="ac-slash-row">
+                      <div className="ac-slash-main">
+                        <span className="ac-name">/{item.name}</span>
+                        {item.description && <span className="ac-slash-desc">{item.description}</span>}
+                      </div>
+                      <div className={`ac-slash-source${item.kind === 'bot' ? ' ac-slash-source--bot' : ''}`} title={item.kind === 'bot' ? `Command from bot ${item.botDisplayName || item.botUsername || ''}` : 'Built-in Stoat command'}>
+                        {item.kind === 'bot' ? (
+                          <>
+                            <span className="ac-slash-source-label">Bot</span>
+                            <span className="ac-slash-source-name">
+                              {item.botDisplayName || item.botUsername || 'Bot'}
+                              {item.botDiscriminator != null && String(item.botDiscriminator).length > 0 && (
+                                <span className="ac-bot-disc">#{item.botDiscriminator}</span>
+                              )}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="ac-slash-source-name">Built-in</span>
+                        )}
+                      </div>
+                    </div>
+                  ) : item.type === 'unicode' ? (
                     <><span className="ac-emoji">{item.e}</span><span className="ac-name">:{item.n || item.name}:</span></>
                   ) : item.type === 'custom' ? (
                     <><img src={item.url} alt="" className="ac-emoji-img" /><span className="ac-name">:{item.name}:</span></>
@@ -1550,6 +1743,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                 ))}
               </div>
             )}
+            <div className="chat-input-composer-surface">
             <FormattingToolbar inputRef={inputRef} value={input} onChange={setInput} />
             <div className="chat-input-row">
             {(canAttachFiles || canSendVoiceMessage) && (
@@ -1625,6 +1819,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
             )}
             </div>
           </div>
+            </div>
           </div>
           {showInputEmoji && (
             <div className="input-emoji-wrap" onClick={(e) => e.stopPropagation()}>
@@ -1647,6 +1842,16 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     {openThread && (
       <ThreadPanel threadChannel={openThread} onClose={() => setOpenThread(null)} customEmojis={customEmojis} serverOwnerId={serverOwnerId} />
     )}
+      {whiteboardOpen && user?._id && (
+        <WhiteboardModal
+          sessionId={whiteboardOpen.sessionId}
+          channelId={whiteboardOpen.channelId}
+          ownerId={whiteboardOpen.ownerId}
+          userId={user._id}
+          resolveDisplayName={resolveWhiteboardDisplayName}
+          onClose={() => setWhiteboardOpen(null)}
+        />
+      )}
     </>
   );
 }

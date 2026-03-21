@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { ulid } from 'ulid';
 import { Bot, User, Member, Channel, Server } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { normalizeSlashCommandsInput } from '../slash/parse.js';
+import { slashCommandNamesConflictWithPeers } from '../slash/conflicts.js';
 
 const router = Router();
 
@@ -147,7 +149,10 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   const bot = await Bot.findById(req.params.target);
   if (!bot) return res.status(404).json({ type: 'NotFound', error: 'Bot not found' });
   if (bot.owner !== req.userId) return res.status(403).json({ type: 'Forbidden', error: 'Not owner' });
-  const { name, public: pub, analytics, discoverable, intents, interactions_url, terms_of_service_url, privacy_policy_url, avatar, profile } = req.body || {};
+  const {
+    name, public: pub, analytics, discoverable, intents, interactions_url,
+    terms_of_service_url, privacy_policy_url, avatar, profile, slash_commands,
+  } = req.body || {};
   let botUser = await User.findById(bot._id);
   if (botUser) {
     if (name != null) {
@@ -176,6 +181,20 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   if (interactions_url != null) bot.interactions_url = String(interactions_url);
   if (terms_of_service_url != null) bot.terms_of_service_url = String(terms_of_service_url);
   if (privacy_policy_url != null) bot.privacy_policy_url = String(privacy_policy_url);
+  if (slash_commands != null) {
+    const norm = normalizeSlashCommandsInput(slash_commands);
+    if (norm.error) {
+      return res.status(400).json({ type: 'FailedValidation', error: norm.error });
+    }
+    const peerErr = await slashCommandNamesConflictWithPeers(
+      bot._id,
+      new Set(norm.commands.map((c) => c.name)),
+    );
+    if (peerErr) {
+      return res.status(400).json({ type: 'SlashCommandConflict', error: peerErr });
+    }
+    bot.slash_commands = norm.commands;
+  }
   if (req.body?.remove === 'Token') bot.token = randomToken();
   await bot.save();
   const out = bot.toObject();

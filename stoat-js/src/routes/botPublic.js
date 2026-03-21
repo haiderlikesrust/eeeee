@@ -115,6 +115,7 @@ router.get('/@me', botAuth, async (req, res) => {
       discoverable: !!req.bot.discoverable,
       analytics: !!req.bot.analytics,
       interactions_url: req.bot.interactions_url || '',
+      slash_commands: req.bot.slash_commands || [],
       terms_of_service_url: req.bot.terms_of_service_url || '',
       privacy_policy_url: req.bot.privacy_policy_url || '',
     },

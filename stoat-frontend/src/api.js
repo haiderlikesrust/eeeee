@@ -50,7 +50,17 @@ export async function api(method, path, body) {
   if (body !== undefined) opts.body = JSON.stringify(body);
   const res = await fetch(`${API_BASE}${path}`, opts);
   if (res.status === 204) return null;
-  const data = await res.json();
+  const raw = await res.text();
+  if (!raw.length) {
+    if (!res.ok) throw { type: 'UnknownError', error: `HTTP ${res.status}`, status: res.status };
+    return null;
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw { type: 'InvalidResponse', error: 'Server returned non-JSON response', status: res.status };
+  }
   if (!res.ok) throw data;
   return data;
 }
@@ -59,7 +69,10 @@ export async function get(path) {
   // Message lists change constantly; caching caused stale polls to wipe optimistic / new sends.
   // Member lists are updated live via PresenceUpdate + refetch — caching returned stale rows for minutes until refresh.
   const skipCache =
-    path.includes('/messages') || path.includes('/ofeed') || path.includes('/members');
+    path.includes('/messages')
+    || path.includes('/ofeed')
+    || path.includes('/members')
+    || path.includes('/commands');
   if (!skipCache) {
     const cached = getCache.get(path);
     if (cached && Date.now() < cached.expires) return cached.data;
@@ -82,7 +95,17 @@ export async function uploadFile(file) {
   const token = getToken();
   if (token) headers['x-session-token'] = token;
   const res = await fetch('/api/attachments', { method: 'POST', headers, body: formData });
-  const data = await res.json();
+  const raw = await res.text();
+  if (!raw.length) {
+    if (!res.ok) throw { type: 'UnknownError', error: `HTTP ${res.status}`, status: res.status };
+    throw { type: 'InvalidResponse', error: 'Empty response from upload' };
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw { type: 'InvalidResponse', error: 'Server returned non-JSON from upload', status: res.status };
+  }
   if (!res.ok) throw data;
   return data;
 }

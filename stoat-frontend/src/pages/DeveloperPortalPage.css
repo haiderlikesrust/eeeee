@@ -75,6 +75,17 @@
   color: var(--header-primary);
 }
 
+.dev-hint {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.dev-hint code {
+  font-size: 12px;
+}
+
 .dev-panel p {
   color: var(--text-muted);
   font-size: 13px;

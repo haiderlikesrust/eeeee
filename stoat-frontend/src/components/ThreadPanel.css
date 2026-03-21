@@ -221,6 +221,97 @@
   min-width: 0;
 }
 
+.thread-input-wrap--slash {
+  position: relative;
+  flex-wrap: wrap;
+}
+
+.thread-slash-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 4px;
+  background: var(--bg-floating);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.3);
+  max-height: min(280px, 40vh);
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.thread-slash-item {
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.thread-slash-item.selected,
+.thread-slash-item:hover {
+  background: var(--bg-modifier-hover);
+}
+
+.thread-slash-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.thread-slash-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.thread-slash-name {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.thread-slash-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-slash-source {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  max-width: 45%;
+  text-align: right;
+}
+
+.thread-slash-source--bot .thread-slash-source-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.thread-slash-source-name {
+  font-size: 12px;
+  color: var(--header-primary);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.thread-slash-disc {
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
 .thread-input-leading {
   display: flex;
   align-items: center;

@@ -41,6 +41,8 @@ function BotCard({
   const [revealedToken, setRevealedToken] = useState('');
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [bannerUploading, setBannerUploading] = useState(false);
+  const [interactionsUrl, setInteractionsUrl] = useState(bot?.interactions_url || '');
+  const [slashCommandsJson, setSlashCommandsJson] = useState(() => JSON.stringify(bot?.slash_commands || [], null, 2));
   const avatarInputRef = useRef(null);
   const bannerInputRef = useRef(null);
 
@@ -51,6 +53,8 @@ function BotCard({
     setAnalytics(!!bot.analytics);
     setIntents(Number(bot.intents || 0));
     setRevealedToken('');
+    setInteractionsUrl(bot?.interactions_url || '');
+    setSlashCommandsJson(JSON.stringify(bot?.slash_commands || [], null, 2));
   }, [bot]);
 
   const avatarUrl = resolveFileUrl(bot?.user?.avatar);
@@ -95,6 +99,14 @@ function BotCard({
 
   const saveSettings = async () => {
     setSaving(true);
+    let slash_commands;
+    try {
+      slash_commands = JSON.parse(slashCommandsJson || '[]');
+    } catch {
+      toast.error('Invalid slash_commands JSON');
+      setSaving(false);
+      return;
+    }
     try {
       await patch(`/bots/${bot._id}`, {
         name: name?.trim() || bot?.user?.username || 'bot',
@@ -102,6 +114,8 @@ function BotCard({
         discoverable,
         analytics,
         intents,
+        interactions_url: interactionsUrl.trim(),
+        slash_commands,
       });
       toast.success('Bot settings saved');
       onUpdated();
@@ -284,6 +298,39 @@ function BotCard({
         <label><input type="checkbox" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} /> Public</label>
         <label><input type="checkbox" checked={discoverable} onChange={(e) => setDiscoverable(e.target.checked)} /> Discoverable</label>
         <label><input type="checkbox" checked={analytics} onChange={(e) => setAnalytics(e.target.checked)} /> Analytics</label>
+      </div>
+
+      <div className="dev-bot-section-label">Slash commands</div>
+      <p className="dev-hint">
+        When a user types <code>/name</code> in a server channel, Stoat POSTs a signed JSON body to your{' '}
+        <strong>interactions URL</strong> (HTTPS). Respond with JSON{' '}
+        <code style={{ whiteSpace: 'nowrap' }}>{'{"type":4,"data":{"content":"…"}}'}</code>{' '}
+        within about 8 seconds. Headers: <code>X-Stoat-Timestamp</code> (unix seconds) and{' '}
+        <code>X-Stoat-Signature</code> (hex HMAC-SHA256 of <code>timestamp + &quot;.&quot; + rawBody</code> using your bot token).
+        Command names: lowercase <code>a-z 0-9 _ -</code>, unique per server among bots, and cannot match built-ins (
+        <code>help</code>, <code>ping</code>, <code>shrug</code>, <code>tableflip</code>).
+      </p>
+      <div className="dev-grid" style={{ marginBottom: 12 }}>
+        <label style={{ gridColumn: '1 / -1' }}>
+          <span>Interactions URL (HTTPS)</span>
+          <input
+            value={interactionsUrl}
+            onChange={(e) => setInteractionsUrl(e.target.value)}
+            placeholder="https://your.bot/interactions"
+            style={{ width: '100%' }}
+          />
+        </label>
+        <label style={{ gridColumn: '1 / -1' }}>
+          <span>slash_commands (JSON array)</span>
+          <textarea
+            value={slashCommandsJson}
+            onChange={(e) => setSlashCommandsJson(e.target.value)}
+            rows={6}
+            spellCheck={false}
+            style={{ width: '100%', resize: 'vertical', fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
+            placeholder='[{"name":"hello","description":"Says hi"}]'
+          />
+        </label>
       </div>
 
       <div className="dev-actions">

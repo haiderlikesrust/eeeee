@@ -4,7 +4,77 @@
  * Includes voice signaling for WebRTC.
  */
 import { WebSocketServer } from 'ws';
-import { Session, User, Member, Server, Channel, Bot } from './db/models/index.js';
+import { Session, User, Member, Server, Channel, Bot, WhiteboardSession } from './db/models/index.js';
+import {
+  createRoom,
+  getRoom,
+  addSubscriber,
+  removeSubscriber,
+  appendOp,
+  getOps,
+  isSubscriber,
+  removeUserFromAllRooms,
+  clearRoomOps,
+} from './whiteboardRooms.js';
+
+/** Per user per session: max WhiteboardOp relayed per 1s window (strokes etc.). */
+const WB_OP_RATE_WINDOW_MS = 1000;
+const WB_OP_RATE_MAX = 45;
+const wbOpTimestamps = new Map();
+
+function allowWhiteboardOpRate(sessionId, userId) {
+  const key = `${String(sessionId)}:${String(userId)}`;
+  const now = Date.now();
+  let arr = wbOpTimestamps.get(key);
+  if (!arr) {
+    arr = [];
+    wbOpTimestamps.set(key, arr);
+  }
+  const win = WB_OP_RATE_WINDOW_MS;
+  const filtered = arr.filter((t) => now - t < win);
+  if (filtered.length >= WB_OP_RATE_MAX) return false;
+  filtered.push(now);
+  wbOpTimestamps.set(key, filtered);
+  return true;
+}
+
+/** Pointer broadcasts: max per 1s per user per session (lighter than ops). */
+const WB_PTR_RATE_MAX = 35;
+const wbPtrTimestamps = new Map();
+
+function allowWhiteboardPointerRate(sessionId, userId) {
+  const key = `${String(sessionId)}:${String(userId)}`;
+  const now = Date.now();
+  let arr = wbPtrTimestamps.get(key);
+  if (!arr) {
+    arr = [];
+    wbPtrTimestamps.set(key, arr);
+  }
+  const filtered = arr.filter((t) => now - t < WB_OP_RATE_WINDOW_MS);
+  if (filtered.length >= WB_PTR_RATE_MAX) return false;
+  filtered.push(now);
+  wbPtrTimestamps.set(key, filtered);
+  return true;
+}
+
+/** In-progress stroke chunks (not persisted); higher cap than final ops. */
+const WB_DRAWING_RATE_MAX = 90;
+const wbDrawingTimestamps = new Map();
+
+function allowWhiteboardDrawingRate(sessionId, userId) {
+  const key = `${String(sessionId)}:${String(userId)}`;
+  const now = Date.now();
+  let arr = wbDrawingTimestamps.get(key);
+  if (!arr) {
+    arr = [];
+    wbDrawingTimestamps.set(key, arr);
+  }
+  const filtered = arr.filter((t) => now - t < WB_OP_RATE_WINDOW_MS);
+  if (filtered.length >= WB_DRAWING_RATE_MAX) return false;
+  filtered.push(now);
+  wbDrawingTimestamps.set(key, filtered);
+  return true;
+}
 
 const clients = new Map(); // key -> { ws, kind, userId, lastPing, intents }
 
@@ -217,6 +287,146 @@ export function createEventServer(server) {
             broadcastToChannel(tcId, { type: 'TypingStop', d: { channel_id: tcId, user_id: userId } }, { excludeUserId: userId });
             break;
           }
+
+          case 'WhiteboardJoin': {
+            if (kind !== 'user') break;
+            const sessionId = msg.sessionId || msg.session_id;
+            if (!sessionId) break;
+            const session = await WhiteboardSession.findById(sessionId).lean();
+            if (!session || session.status !== 'open') {
+              ws.send(JSON.stringify({ type: 'WhiteboardError', d: { code: 'session_not_found', session_id: sessionId } }));
+              break;
+            }
+            const wbMember = await Member.findOne({ server: session.server, user: userId }).lean();
+            if (!wbMember) break;
+            let room = getRoom(sessionId);
+            if (!room) {
+              createRoom(sessionId, {
+                ownerId: session.owner,
+                channelId: session.channel,
+                serverId: session.server,
+              });
+              room = getRoom(sessionId);
+            }
+            if (!room) break;
+            addSubscriber(sessionId, userId);
+            ws.send(JSON.stringify({
+              type: 'WhiteboardState',
+              d: { session_id: sessionId, ops: getOps(sessionId) },
+            }));
+            broadcastToWhiteboardSession(sessionId, {
+              type: 'WhiteboardParticipantJoin',
+              d: { session_id: sessionId, user_id: userId },
+            }, { excludeUserId: userId });
+            break;
+          }
+
+          case 'WhiteboardOp': {
+            if (kind !== 'user') break;
+            const sessionId = msg.sessionId || msg.session_id;
+            const op = msg.op;
+            if (!sessionId || op == null || typeof op !== 'object') break;
+            const session = await WhiteboardSession.findById(sessionId).lean();
+            if (!session || session.status !== 'open') break;
+            if (!isSubscriber(sessionId, userId)) break;
+
+            if (op.kind === 'clear_board') {
+              const room = getRoom(sessionId);
+              if (!room || String(room.ownerId) !== String(userId)) break;
+              clearRoomOps(sessionId);
+              const opWithUser = { kind: 'clear_board', user_id: String(userId) };
+              broadcastToWhiteboardSession(sessionId, {
+                type: 'WhiteboardOp',
+                d: { session_id: sessionId, op: opWithUser },
+              });
+              break;
+            }
+
+            if (!allowWhiteboardOpRate(sessionId, userId)) {
+              ws.send(JSON.stringify({
+                type: 'WhiteboardError',
+                d: { code: 'rate_limited', session_id: sessionId },
+              }));
+              break;
+            }
+
+            const opWithUser = { ...op, user_id: String(userId) };
+            if (!appendOp(sessionId, opWithUser)) break;
+            broadcastToWhiteboardSession(sessionId, {
+              type: 'WhiteboardOp',
+              d: { session_id: sessionId, op: opWithUser },
+            }, { excludeUserId: userId });
+            break;
+          }
+
+          case 'WhiteboardPointer': {
+            if (kind !== 'user') break;
+            const sessionId = msg.sessionId || msg.session_id;
+            if (!sessionId) break;
+            const { x, y } = msg;
+            if (typeof x !== 'number' || typeof y !== 'number') break;
+            if (x < 0 || x > 1 || y < 0 || y > 1) break;
+            const session = await WhiteboardSession.findById(sessionId).lean();
+            if (!session || session.status !== 'open') break;
+            if (!isSubscriber(sessionId, userId)) break;
+            if (!allowWhiteboardPointerRate(sessionId, userId)) break;
+            broadcastToWhiteboardSession(sessionId, {
+              type: 'WhiteboardPointer',
+              d: { session_id: sessionId, user_id: userId, x, y },
+            }, { excludeUserId: userId });
+            break;
+          }
+
+          case 'WhiteboardDrawing': {
+            if (kind !== 'user') break;
+            const sessionId = msg.sessionId || msg.session_id;
+            const strokeId = msg.strokeId || msg.stroke_id;
+            const pointsDelta = msg.points_delta;
+            if (!sessionId || !strokeId || !Array.isArray(pointsDelta) || pointsDelta.length === 0) break;
+            if (pointsDelta.length > 400) break;
+            let pointsOk = true;
+            for (const p of pointsDelta) {
+              if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') {
+                pointsOk = false;
+                break;
+              }
+              if (p.x < -0.01 || p.x > 1.01 || p.y < -0.01 || p.y > 1.01) {
+                pointsOk = false;
+                break;
+              }
+            }
+            if (!pointsOk) break;
+            const session = await WhiteboardSession.findById(sessionId).lean();
+            if (!session || session.status !== 'open') break;
+            if (!isSubscriber(sessionId, userId)) break;
+            const payload = {
+              session_id: sessionId,
+              stroke_id: String(strokeId),
+              user_id: userId,
+              points_delta: pointsDelta,
+              color: msg.color,
+              width: msg.width,
+              tool: msg.tool,
+            };
+            if (JSON.stringify(payload).length > 48000) break;
+            if (!allowWhiteboardDrawingRate(sessionId, userId)) break;
+            broadcastToWhiteboardSession(sessionId, {
+              type: 'WhiteboardDrawing',
+              d: payload,
+            }, { excludeUserId: userId });
+            break;
+          }
+
+          case 'WhiteboardLeave': {
+            const sessionId = msg.sessionId || msg.session_id;
+            if (!sessionId) break;
+            removeSubscriber(sessionId, userId);
+            broadcastToWhiteboardSession(sessionId, {
+              type: 'WhiteboardParticipantLeave',
+              d: { session_id: sessionId, user_id: userId },
+            }, { excludeUserId: userId });
+            break;
+          }
         }
       } catch {}
     });
@@ -270,6 +480,7 @@ function leaveAllVoice(userId, key) {
 /** Remove client and broadcast PresenceUpdate to their servers (used by close and heartbeat). */
 async function removeClientAndNotifyServers(key, userId, serverIds, uid) {
   leaveAllVoice(userId, key);
+  removeUserFromAllRooms(uid ?? userId);
   clients.delete(key);
   const serverIdsToNotify = Array.isArray(serverIds) ? [...serverIds] : [];
   const idToNotify = uid != null ? String(uid) : (userId != null ? String(userId) : null);
@@ -313,6 +524,19 @@ export async function broadcastToServer(serverId, event, excludeUserId, options 
     if (!memberUserIds.has(String(entry.userId))) continue;
     if (exclude && String(entry.userId) === exclude) continue;
     if (!canReceiveIntent(entry, options.eventIntent)) continue;
+    entry.ws.send(payload);
+  }
+}
+
+export function broadcastToWhiteboardSession(sessionId, event, options = {}) {
+  const room = getRoom(sessionId);
+  if (!room) return;
+  const payload = typeof event === 'string' ? event : JSON.stringify(event);
+  const exclude = options.excludeUserId != null ? String(options.excludeUserId) : null;
+  for (const [, entry] of clients.entries()) {
+    if (entry.ws.readyState !== 1) continue;
+    if (!room.subscribers.has(String(entry.userId))) continue;
+    if (exclude && String(entry.userId) === exclude) continue;
     entry.ws.send(payload);
   }
 }

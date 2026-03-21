@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { get, post, uploadFile } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { useWS } from '../context/WebSocketContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import VoiceRecordingBar from './VoiceRecordingBar';
 import VoiceMessageAttachment from './VoiceMessageAttachment';
 import { isVoiceAttachment, withVoiceMetadata, extensionForVoiceMime } from '../utils/voiceMessage';
+import { SLASH_BUILTIN_FALLBACK } from '../utils/slashBuiltins';
 import ServerOwnerCrown from './ServerOwnerCrown';
 import { showServerOwnerCrownForUser } from '../utils/serverOwnerCrownDisplay';
 import { Permissions, hasPermission, ALL_PERMISSIONS } from '../utils/permissions';
@@ -31,6 +33,7 @@ function getAuthorAvatar(author) {
 
 export default function ThreadPanel({ threadChannel, onClose, customEmojis, serverOwnerId }) {
   const { user } = useAuth();
+  const toast = useToast();
   const { on } = useWS();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -38,6 +41,9 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
   const [pendingFiles, setPendingFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [channelPerms, setChannelPerms] = useState(0);
+  const [slashCommandsData, setSlashCommandsData] = useState({ builtin: [], bots: [] });
+  const [slashAutocomplete, setSlashAutocomplete] = useState(null);
+  const [slashAcSelected, setSlashAcSelected] = useState(0);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -56,6 +62,13 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
 
   useEffect(() => {
     if (!channelId) return;
+    get(`/channels/${channelId}/commands`)
+      .then((d) => setSlashCommandsData({ builtin: d?.builtin || [], bots: d?.bots || [] }))
+      .catch(() => setSlashCommandsData({ builtin: [], bots: [] }));
+  }, [channelId]);
+
+  useEffect(() => {
+    if (!channelId) return;
     get(`/channels/${channelId}/permissions`)
       .then((p) => {
         const raw = p?.permissions;
@@ -68,6 +81,52 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
   useEffect(() => {
     if (!canAttachFiles) setPendingFiles((p) => (p.length === 0 ? p : []));
   }, [canAttachFiles]);
+
+  useEffect(() => {
+    const leadingWs = input.match(/^\s*/)?.[0]?.length ?? 0;
+    const t = input.slice(leadingWs);
+    if (t.startsWith('/') && !t.startsWith('//')) {
+      const rest = t.slice(1);
+      if (!/\s/.test(rest) && /^[a-z0-9_-]*$/i.test(rest)) {
+        const query = rest.toLowerCase();
+        const slashSlashIndex = leadingWs;
+        const flat = [];
+        const builtinList =
+          slashCommandsData.builtin && slashCommandsData.builtin.length > 0
+            ? slashCommandsData.builtin
+            : SLASH_BUILTIN_FALLBACK;
+        for (const b of builtinList) {
+          flat.push({ type: 'slash', kind: 'builtin', name: b.name, description: b.description || '' });
+        }
+        for (const bot of slashCommandsData.bots || []) {
+          const botLabel = (bot.display_name || bot.username || '').trim() || bot.bot_id || 'Bot';
+          for (const c of bot.commands || []) {
+            flat.push({
+              type: 'slash',
+              kind: 'bot',
+              name: c.name,
+              description: c.description || '',
+              botId: bot.bot_id,
+              botUsername: bot.username,
+              botDisplayName: botLabel,
+              botDiscriminator: bot.discriminator,
+            });
+          }
+        }
+        const filtered = flat.filter((x) => x.name.startsWith(query)).slice(0, 25);
+        if (filtered.length > 0) {
+          setSlashAutocomplete({
+            items: filtered,
+            slashSlashIndex,
+            replaceEnd: input.length,
+          });
+          setSlashAcSelected(0);
+          return;
+        }
+      }
+    }
+    setSlashAutocomplete(null);
+  }, [input, slashCommandsData]);
 
   // Fetch thread messages
   useEffect(() => {
@@ -151,7 +210,13 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
       });
       setInput('');
       setPendingFiles([]);
-    } catch {}
+    } catch (err) {
+      if (err?.type === 'FailedDependency' && err?.user_message) {
+        const um = err.user_message;
+        setMessages((prev) => (prev.some((m) => m._id === um._id) ? prev : [...prev, um]));
+        toast.error(err?.error || 'Slash command failed');
+      }
+    }
     setUploading(false);
   };
 
@@ -163,6 +228,30 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
 
   const removePendingFile = (idx) => {
     setPendingFiles((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const applySlashItem = (item) => {
+    if (!slashAutocomplete) return;
+    const { slashSlashIndex, replaceEnd } = slashAutocomplete;
+    setInput(input.slice(0, slashSlashIndex) + `/${item.name} ` + input.slice(replaceEnd));
+    setSlashAutocomplete(null);
+    inputRef.current?.focus();
+  };
+
+  const onThreadInputKeyDown = (e) => {
+    if (!slashAutocomplete) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSlashAcSelected((s) => Math.min(s + 1, slashAutocomplete.items.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSlashAcSelected((s) => Math.max(s - 1, 0));
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      applySlashItem(slashAutocomplete.items[slashAcSelected]);
+    } else if (e.key === 'Escape') {
+      setSlashAutocomplete(null);
+    }
   };
 
   if (!threadChannel) return null;
@@ -259,7 +348,42 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
             ))}
           </div>
         )}
-        <div className="thread-input-wrap">
+        <div className="thread-input-wrap thread-input-wrap--slash">
+          {slashAutocomplete && (
+            <div className="thread-slash-popup" role="listbox" aria-label="Slash commands">
+              {slashAutocomplete.items.map((item, i) => (
+                <div
+                  key={`${item.kind}-${item.name}-${item.botId || 'builtin'}-${i}`}
+                  role="option"
+                  aria-selected={i === slashAcSelected}
+                  className={`thread-slash-item ${i === slashAcSelected ? 'selected' : ''}`}
+                  onMouseDown={(ev) => { ev.preventDefault(); applySlashItem(item); }}
+                >
+                  <div className="thread-slash-row">
+                    <div className="thread-slash-main">
+                      <span className="thread-slash-name">/{item.name}</span>
+                      {item.description && <span className="thread-slash-desc">{item.description}</span>}
+                    </div>
+                    <div className={`thread-slash-source${item.kind === 'bot' ? ' thread-slash-source--bot' : ''}`} title={item.kind === 'bot' ? `Command from bot ${item.botDisplayName || item.botUsername || ''}` : 'Built-in Stoat command'}>
+                      {item.kind === 'bot' ? (
+                        <>
+                          <span className="thread-slash-source-label">Bot</span>
+                          <span className="thread-slash-source-name">
+                            {item.botDisplayName || item.botUsername || 'Bot'}
+                            {item.botDiscriminator != null && String(item.botDiscriminator).length > 0 && (
+                              <span className="thread-slash-disc">#{item.botDiscriminator}</span>
+                            )}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="thread-slash-source-name">Built-in</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {(canAttachFiles || canSendVoiceMessage) && (
           <div className="thread-input-leading">
           {canAttachFiles && (
@@ -296,6 +420,7 @@ export default function ThreadPanel({ threadChannel, onClose, customEmojis, serv
             className="thread-input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onThreadInputKeyDown}
             placeholder={uploading ? 'Uploading...' : `Reply in thread...`}
             disabled={uploading}
           />
