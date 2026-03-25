@@ -23,6 +23,10 @@ function pickDiscriminator() {
   return String(Math.floor(Math.random() * 10000)).padStart(4, '0');
 }
 
+function cleanSearchQuery(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 // POST /bots/create
 router.post('/create', authMiddleware(), async (req, res) => {
   const name = (req.body?.name || 'bot').slice(0, 32);
@@ -59,6 +63,80 @@ router.post('/create', authMiddleware(), async (req, res) => {
     bot: { ...botObj, token: undefined },
     user: { ...userObj, relationship: 'None', online: false },
   });
+});
+
+// GET /bots/marketplace - list public discoverable bots
+router.get('/marketplace', authMiddleware(true), async (req, res) => {
+  const limit = Math.max(1, Math.min(Number(req.query.limit) || 24, 60));
+  const q = cleanSearchQuery(req.query.q);
+  const sort = String(req.query.sort || 'popular').toLowerCase();
+
+  const bots = await Bot.find({ public: true, discoverable: true })
+    .sort({ _id: -1 })
+    .limit(Math.max(120, limit * 4))
+    .lean();
+
+  if (!bots.length) return res.json({ bots: [] });
+
+  const botIds = bots.map((b) => b._id);
+  const users = await User.find({ _id: { $in: botIds } })
+    .select('_id username display_name discriminator avatar profile flags')
+    .lean();
+  const userById = Object.fromEntries(users.map((u) => [u._id, u]));
+
+  const installCountsRaw = await Member.aggregate([
+    { $match: { user: { $in: botIds } } },
+    { $group: { _id: '$user', count: { $sum: 1 } } },
+  ]);
+  const installCountByBot = Object.fromEntries(installCountsRaw.map((d) => [d._id, d.count]));
+
+  let out = bots
+    .map((bot) => {
+      const user = userById[bot._id];
+      if (!user) return null;
+      return {
+        _id: bot._id,
+        public: !!bot.public,
+        discoverable: !!bot.discoverable,
+        analytics: !!bot.analytics,
+        intents: Number(bot.intents || 0),
+        interactions_url: bot.interactions_url || '',
+        terms_of_service_url: bot.terms_of_service_url || '',
+        privacy_policy_url: bot.privacy_policy_url || '',
+        slash_command_count: Array.isArray(bot.slash_commands) ? bot.slash_commands.length : 0,
+        installed_count: Number(installCountByBot[bot._id] || 0),
+        user: {
+          _id: user._id,
+          username: user.username,
+          display_name: user.display_name || null,
+          discriminator: user.discriminator || null,
+          avatar: user.avatar || null,
+          profile: user.profile || null,
+          flags: user.flags || 0,
+        },
+      };
+    })
+    .filter(Boolean);
+
+  if (q) {
+    out = out.filter((entry) => {
+      const username = String(entry.user?.username || '').toLowerCase();
+      const displayName = String(entry.user?.display_name || '').toLowerCase();
+      const bio = String(entry.user?.profile?.content || entry.user?.profile?.bio || '').toLowerCase();
+      return username.includes(q) || displayName.includes(q) || bio.includes(q);
+    });
+  }
+
+  if (sort === 'new') {
+    out.sort((a, b) => String(b._id).localeCompare(String(a._id)));
+  } else {
+    out.sort((a, b) => {
+      if (b.installed_count !== a.installed_count) return b.installed_count - a.installed_count;
+      return String(b._id).localeCompare(String(a._id));
+    });
+  }
+
+  res.json({ bots: out.slice(0, limit) });
 });
 
 // GET /bots/:target/token
@@ -188,7 +266,7 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
     }
     const peerErr = await slashCommandNamesConflictWithPeers(
       bot._id,
-      new Set(norm.commands.map((c) => c.name)),
+      new Set(norm.commands.map((c) => `${String(c.type || 'CHAT_INPUT')}:${c.name}`)),
     );
     if (peerErr) {
       return res.status(400).json({ type: 'SlashCommandConflict', error: peerErr });

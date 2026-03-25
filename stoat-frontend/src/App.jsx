@@ -15,6 +15,7 @@ const AppLayout = lazy(() => import('./pages/AppLayout'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const DeveloperPortalPage = lazy(() => import('./pages/DeveloperPortalPage'));
 const BotBuilderEditorPage = lazy(() => import('./pages/BotBuilderEditorPage'));
+const BotMarketplacePage = lazy(() => import('./pages/BotMarketplacePage'));
 const ChangelogPage = lazy(() => import('./pages/ChangelogPage'));
 
 export default function App() {
@@ -33,6 +34,7 @@ export default function App() {
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/invite/:code" element={<InvitePage />} />
           <Route path="/changelog" element={<ChangelogPage />} />
+          <Route path="/bots" element={<BotMarketplacePage />} />
           <Route path="/developers" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
@@ -53,6 +55,7 @@ export default function App() {
                 <Route path="/admin" element={<AdminPage />} />
                 <Route path="/invite/:code" element={<InvitePage />} />
                 <Route path="/changelog" element={<ChangelogPage />} />
+                <Route path="/bots" element={<BotMarketplacePage />} />
                 <Route path="/developers" element={<DeveloperPortalPage />} />
                 <Route path="/developer/editor" element={<BotBuilderEditorPage />} />
                 <Route path="/developers/editor" element={<BotBuilderEditorPage />} />

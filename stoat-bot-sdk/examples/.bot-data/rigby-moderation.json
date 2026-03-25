@@ -1,0 +1,54 @@
+{
+  "servers": {
+    "01KM7FH2C12NYKAT15WKHVW61K": {
+      "logChannelId": "01KMHSVH6CW60WZ7GX77F61XVC",
+      "modRoleIds": [],
+      "whitelistUserIds": [],
+      "warningThresholds": {
+        "kick": 3,
+        "ban": 5
+      },
+      "warnings": {
+        "01KM7FSZSZ24Z7AVMPF7K67NTW": [
+          {
+            "id": 1,
+            "userId": "01KM7FSZSZ24Z7AVMPF7K67NTW",
+            "actorUserId": "01KM7FGVFPXY7ZXXQA8FERBH3Q",
+            "reason": "No reason provided",
+            "source": "manual",
+            "at": "2026-03-25T06:10:04.248Z"
+          },
+          {
+            "id": 2,
+            "userId": "01KM7FSZSZ24Z7AVMPF7K67NTW",
+            "actorUserId": "01KM7FGVFPXY7ZXXQA8FERBH3Q",
+            "reason": "nigger",
+            "source": "manual",
+            "at": "2026-03-25T06:13:25.256Z"
+          },
+          {
+            "id": 3,
+            "userId": "01KM7FSZSZ24Z7AVMPF7K67NTW",
+            "actorUserId": "01KM7FGVFPXY7ZXXQA8FERBH3Q",
+            "reason": "No reason provided",
+            "source": "manual",
+            "at": "2026-03-25T06:54:51.515Z"
+          }
+        ]
+      },
+      "caseCounter": 4,
+      "automod": {
+        "enabled": true,
+        "blockInvites": true,
+        "maxMentions": 8,
+        "badWords": [],
+        "antiSpam": {
+          "enabled": true,
+          "maxMessages": 6,
+          "windowSeconds": 8,
+          "action": "warn"
+        }
+      }
+    }
+  }
+}

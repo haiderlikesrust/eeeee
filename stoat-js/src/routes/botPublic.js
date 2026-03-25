@@ -1,14 +1,14 @@
 import { Router } from 'express';
 import { ulid } from 'ulid';
 import {
-  Bot, User, Channel, Message, Member, Server, ServerBan,
+  Bot, User, Channel, Message, Member, Server, ServerBan, Interaction,
 } from '../db/models/index.js';
 import { toPublicUser } from '../publicUser.js';
 import {
-  Permissions, computeChannelPermissions, computeServerPermissions, hasPermission, outranks, sameId,
+  Permissions, computeChannelPermissions, computeServerPermissions, hasPermission, outranks, sameId, canManageRole,
   isVoiceMessageAttachment,
 } from '../permissions.js';
-import { broadcastToChannel, broadcastToServer, broadcastToUser, GatewayIntents } from '../events.js';
+import { broadcastToChannel, broadcastToServer, broadcastToUser, GatewayIntents, isUserOnlineDisplay } from '../events.js';
 import { notifyPushForNewMessage } from '../pushNotify.js';
 
 const router = Router();
@@ -97,12 +97,291 @@ function messageToJson(m, authorMap = {}) {
     attachments: m.attachments || [],
     edited: m.edited,
     embeds: m.embeds || [],
+    components: m.components || [],
     mentions: m.mentions || [],
     replies: m.replies || [],
     reactions,
     pinned: m.pinned || false,
     created_at: m.created_at,
   };
+}
+
+const BUTTON_STYLE_MAP = {
+  1: 'primary',
+  2: 'secondary',
+  3: 'success',
+  4: 'danger',
+  5: 'link',
+};
+
+function normalizeButtonStyle(style) {
+  if (Number.isFinite(Number(style)) && BUTTON_STYLE_MAP[Number(style)]) return BUTTON_STYLE_MAP[Number(style)];
+  const s = String(style || '').trim().toLowerCase();
+  if (['primary', 'secondary', 'success', 'danger', 'link'].includes(s)) return s;
+  return 'secondary';
+}
+
+function normalizeComponents(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const normalizedRows = [];
+  const normalizeOne = (componentLike) => {
+    if (!componentLike || typeof componentLike !== 'object') return null;
+    const typeRaw = String(componentLike.type || '').toLowerCase();
+    const isSelectType = typeRaw === 'select'
+      || typeRaw === 'string_select'
+      || typeRaw === 'select_menu'
+      || Number(componentLike.type) === 3
+      || Array.isArray(componentLike.options);
+
+    if (isSelectType) {
+      const customId = String(componentLike.custom_id || componentLike.customId || '').slice(0, 100);
+      if (!customId) return null;
+      const optionsIn = Array.isArray(componentLike.options) ? componentLike.options : [];
+      const options = optionsIn.slice(0, 25).map((opt) => ({
+        label: String(opt?.label || '').slice(0, 100),
+        value: String(opt?.value || '').slice(0, 100),
+        description: opt?.description != null ? String(opt.description).slice(0, 100) : undefined,
+        default: !!opt?.default,
+      })).filter((opt) => opt.label && opt.value);
+      if (options.length === 0) return null;
+      const minValues = Math.max(0, Math.min(options.length, Number(componentLike.min_values ?? componentLike.minValues ?? 1) || 1));
+      const maxValues = Math.max(minValues, Math.min(options.length, Number(componentLike.max_values ?? componentLike.maxValues ?? 1) || 1));
+      return {
+        type: 'select',
+        custom_id: customId,
+        placeholder: componentLike.placeholder != null ? String(componentLike.placeholder).slice(0, 100) : undefined,
+        min_values: minValues,
+        max_values: maxValues,
+        disabled: !!componentLike.disabled,
+        options,
+      };
+    }
+
+    const style = normalizeButtonStyle(componentLike.style);
+    const label = String(componentLike.label || '').slice(0, 80);
+    const disabled = !!componentLike.disabled;
+    const isLink = style === 'link';
+    const customId = !isLink ? String(componentLike.custom_id || componentLike.customId || '').slice(0, 100) : '';
+    const url = isLink ? String(componentLike.url || '').trim().slice(0, 512) : '';
+    if (isLink && !/^https?:\/\//i.test(url)) return null;
+    if (!isLink && !customId) return null;
+    return {
+      type: 'button',
+      style,
+      label,
+      custom_id: customId || undefined,
+      url: url || undefined,
+      disabled,
+    };
+  };
+
+  const pushComponent = (targetRow, componentLike) => {
+    if (!targetRow || targetRow.components.length >= 5) return;
+    const c = normalizeOne(componentLike);
+    if (!c) return;
+    targetRow.components.push(c);
+  };
+
+  const ensureRow = () => {
+    const last = normalizedRows[normalizedRows.length - 1];
+    if (last && last.components.length < 5) return last;
+    if (normalizedRows.length >= 5) return null;
+    const row = { type: 'action_row', components: [] };
+    normalizedRows.push(row);
+    return row;
+  };
+
+  for (const rowLike of raw.slice(0, 25)) {
+    if (!rowLike || typeof rowLike !== 'object') continue;
+    const rowButtons = Array.isArray(rowLike.components) ? rowLike.components : null;
+    if (rowButtons) {
+      const row = ensureRow();
+      if (!row) break;
+      for (const componentLike of rowButtons.slice(0, 5)) pushComponent(row, componentLike);
+      continue;
+    }
+    const row = ensureRow();
+    if (!row) break;
+    pushComponent(row, rowLike);
+  }
+
+  return normalizedRows.filter((r) => Array.isArray(r.components) && r.components.length > 0);
+}
+
+function normalizeModalPayload(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const customId = String(raw.custom_id || raw.customId || '').slice(0, 100);
+  const title = String(raw.title || '').slice(0, 45);
+  const rowLikes = Array.isArray(raw.components) ? raw.components : [];
+  if (!customId || !title) return null;
+  const components = [];
+  for (const rowLike of rowLikes.slice(0, 5)) {
+    const fields = Array.isArray(rowLike?.components) ? rowLike.components : [];
+    const field = fields[0];
+    if (!field || typeof field !== 'object') continue;
+    const typeRaw = String(field.type || '').toLowerCase();
+    if (!(typeRaw === 'text_input' || Number(field.type) === 4)) continue;
+    const fieldCustomId = String(field.custom_id || field.customId || '').slice(0, 100);
+    if (!fieldCustomId) continue;
+    const styleRaw = String(field.style || '').toLowerCase();
+    const style = (styleRaw === 'paragraph' || Number(field.style) === 2) ? 'paragraph' : 'short';
+    components.push({
+      type: 'action_row',
+      components: [{
+        type: 'text_input',
+        custom_id: fieldCustomId,
+        label: String(field.label || '').slice(0, 45) || 'Input',
+        style,
+        min_length: Math.max(0, Math.min(4000, Number(field.min_length ?? field.minLength ?? 0) || 0)),
+        max_length: Math.max(1, Math.min(4000, Number(field.max_length ?? field.maxLength ?? 4000) || 4000)),
+        required: field.required !== false,
+        placeholder: field.placeholder != null ? String(field.placeholder).slice(0, 100) : undefined,
+        value: field.value != null ? String(field.value).slice(0, 4000) : undefined,
+      }],
+    });
+  }
+  if (components.length === 0) return null;
+  return { custom_id: customId, title, components };
+}
+
+function isEphemeralFlags(flags) {
+  const n = Number(flags) || 0;
+  return (n & 64) === 64;
+}
+
+async function sendInteractionEphemeral(userId, channelId, botId, data = {}) {
+  const content = String(data?.content || '').slice(0, 2000);
+  const embeds = Array.isArray(data?.embeds) ? data.embeds : [];
+  const components = normalizeComponents(data?.components || []);
+  const payload = {
+    id: ulid(),
+    channel_id: channelId,
+    bot_id: botId,
+    content,
+    embeds,
+    components,
+    created_at: new Date().toISOString(),
+  };
+  broadcastToUser(userId, { type: 'INTERACTION_EPHEMERAL_CREATE', d: payload });
+  return payload;
+}
+
+async function createBotMessageInChannel(ch, botId, data = {}) {
+  const channelId = ch?._id || ch;
+  const msgId = ulid();
+  const msg = await Message.create({
+    _id: msgId,
+    channel: channelId,
+    author: botId,
+    content: String(data?.content || '').slice(0, 2000),
+    embeds: Array.isArray(data?.embeds) ? data.embeds : [],
+    components: normalizeComponents(data?.components || []),
+    mentions: [],
+    replies: [],
+  });
+  await Channel.updateOne({ _id: channelId }, { $set: { last_message_id: msgId } });
+  const author = await User.findById(botId)
+    .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+    .lean();
+  const payload = messageToJson(msg, { [botId]: author });
+  await broadcastToChannel(channelId, { type: 'MESSAGE_CREATE', d: payload }, {
+    eventIntent: GatewayIntents.GUILD_MESSAGES,
+  });
+  notifyPushForNewMessage(ch, botId, payload);
+  return { message: msg, payload };
+}
+
+async function updateBotMessageInChannel(ch, botId, messageId, data = {}) {
+  const channelId = ch?._id || ch;
+  const msg = await Message.findOne({ _id: messageId, channel: channelId, author: botId });
+  if (!msg) return null;
+  if (data.content != null) msg.content = String(data.content).slice(0, 2000);
+  if (data.embeds != null) msg.embeds = Array.isArray(data.embeds) ? data.embeds : [];
+  if (data.components != null) msg.components = normalizeComponents(data.components);
+  msg.edited = new Date();
+  await msg.save();
+  const author = await User.findById(botId)
+    .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+    .lean();
+  const payload = messageToJson(msg, { [botId]: author });
+  await broadcastToChannel(channelId, { type: 'MESSAGE_UPDATE', d: payload }, {
+    eventIntent: GatewayIntents.GUILD_MESSAGES,
+  });
+  return { message: msg, payload };
+}
+
+async function applyInteractionCallback({ interaction, ch, botId, callback }) {
+  if (!callback || typeof callback !== 'object') return { ok: false, error: 'Invalid callback payload' };
+  const type = Number(callback.type);
+  const data = callback.data && typeof callback.data === 'object' ? callback.data : {};
+  if (![4, 5, 6, 7, 9].includes(type)) {
+    return { ok: false, error: 'Unsupported callback type' };
+  }
+
+  interaction.acknowledged = true;
+
+  if (type === 5) {
+    interaction.deferred = true;
+    interaction.deferred_ephemeral = isEphemeralFlags(data.flags);
+    await interaction.save();
+    return { ok: true, deferred: true };
+  }
+
+  if (type === 6) {
+    await interaction.save();
+    return { ok: true, deferred: true };
+  }
+
+  if (type === 9) {
+    const modal = normalizeModalPayload(data);
+    if (!modal) return { ok: false, error: 'Invalid modal payload' };
+    interaction.pending_modal = modal;
+    await interaction.save();
+    broadcastToUser(interaction.user, {
+      type: 'INTERACTION_MODAL_CREATE',
+      d: {
+        channel_id: interaction.channel,
+        interaction_id: interaction._id,
+        interaction_token: interaction.token,
+        modal,
+      },
+    });
+    return { ok: true, modal };
+  }
+
+  if (type === 7) {
+    const targetId = interaction.message_id || interaction.original_response_message_id;
+    if (!targetId) return { ok: false, error: 'No message to update for type 7' };
+    const updated = await updateBotMessageInChannel(ch, botId, targetId, data);
+    if (!updated) return { ok: false, error: 'Target message not found' };
+    await interaction.save();
+    return { ok: true, updated_message_id: targetId };
+  }
+
+  if (type === 4) {
+    if (isEphemeralFlags(data.flags)) {
+      const ephemeral = await sendInteractionEphemeral(interaction.user, interaction.channel, botId, data);
+      await interaction.save();
+      return { ok: true, ephemeral };
+    }
+    const created = await createBotMessageInChannel(ch, botId, data);
+    interaction.original_response_message_id = created.message._id;
+    await interaction.save();
+    return { ok: true, message: created.payload };
+  }
+
+  return { ok: false, error: 'Unhandled callback type' };
+}
+
+function roleEntries(server) {
+  const raw = server?.roles && typeof server.roles.toObject === 'function'
+    ? server.roles.toObject()
+    : (server?.roles || {});
+  return Object.entries(typeof raw === 'object' && raw ? raw : {}).map(([id, role]) => ({
+    id,
+    ...role,
+    rank: role?.rank ?? 0,
+  }));
 }
 
 // GET /bot/@me
@@ -249,6 +528,7 @@ router.post('/channels/:target/messages', botAuth, async (req, res) => {
     content: String(content).slice(0, 2000),
     attachments: req.body?.attachments || [],
     embeds: req.body?.embeds || [],
+    components: normalizeComponents(req.body?.components || []),
     mentions: req.body?.mentions || [],
     replies: req.body?.replies || [],
   });
@@ -276,9 +556,10 @@ router.patch('/channels/:target/messages/:msg', botAuth, async (req, res) => {
   const msg = await Message.findOne({ _id: req.params.msg, channel: ch._id });
   if (!msg) return res.status(404).json({ type: 'NotFound', error: 'Message not found' });
   if (msg.author !== req.userId) return res.status(403).json({ type: 'Forbidden', error: 'Not author' });
-  const { content, embeds } = req.body || {};
+  const { content, embeds, components } = req.body || {};
   if (content != null) msg.content = String(content).slice(0, 2000);
   if (embeds != null) msg.embeds = Array.isArray(embeds) ? embeds : [];
+  if (components != null) msg.components = normalizeComponents(components);
   msg.edited = new Date();
   await msg.save();
   const author = await User.findById(msg.author)
@@ -289,6 +570,85 @@ router.patch('/channels/:target/messages/:msg', botAuth, async (req, res) => {
     eventIntent: GatewayIntents.GUILD_MESSAGES,
   });
   res.json(payload);
+});
+
+// POST /bot/interactions/:id/:token/callback
+router.post('/interactions/:id/:token/callback', botAuth, async (req, res) => {
+  const interaction = await Interaction.findOne({
+    _id: req.params.id,
+    token: req.params.token,
+    bot: req.userId,
+  });
+  if (!interaction) return res.status(404).json({ type: 'NotFound', error: 'Interaction not found' });
+  const ch = await Channel.findById(interaction.channel);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+
+  const callback = {
+    type: req.body?.type,
+    data: req.body?.data || {},
+  };
+  const out = await applyInteractionCallback({
+    interaction,
+    ch,
+    botId: req.userId,
+    callback,
+  });
+  if (!out.ok) return res.status(400).json({ type: 'FailedValidation', error: out.error || 'Failed to apply interaction callback' });
+  res.json(out);
+});
+
+// POST /bot/interactions/:id/:token/followups
+router.post('/interactions/:id/:token/followups', botAuth, async (req, res) => {
+  const interaction = await Interaction.findOne({
+    _id: req.params.id,
+    token: req.params.token,
+    bot: req.userId,
+  });
+  if (!interaction) return res.status(404).json({ type: 'NotFound', error: 'Interaction not found' });
+  const ch = await Channel.findById(interaction.channel);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+
+  const data = req.body?.data && typeof req.body.data === 'object' ? req.body.data : (req.body || {});
+  if (isEphemeralFlags(data.flags)) {
+    const payload = await sendInteractionEphemeral(interaction.user, interaction.channel, req.userId, data);
+    return res.status(201).json({ ephemeral: payload });
+  }
+  const created = await createBotMessageInChannel(ch, req.userId, data);
+  res.status(201).json(created.payload);
+});
+
+// PATCH /bot/interactions/:id/:token/original
+router.patch('/interactions/:id/:token/original', botAuth, async (req, res) => {
+  const interaction = await Interaction.findOne({
+    _id: req.params.id,
+    token: req.params.token,
+    bot: req.userId,
+  });
+  if (!interaction) return res.status(404).json({ type: 'NotFound', error: 'Interaction not found' });
+  const ch = await Channel.findById(interaction.channel);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+
+  const data = req.body?.data && typeof req.body.data === 'object' ? req.body.data : (req.body || {});
+  const originalId = interaction.original_response_message_id;
+  if (originalId) {
+    const updated = await updateBotMessageInChannel(ch, req.userId, originalId, data);
+    if (!updated) return res.status(404).json({ type: 'NotFound', error: 'Original response message not found' });
+    return res.json(updated.payload);
+  }
+
+  if (!interaction.deferred) {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Interaction has no original response to edit' });
+  }
+
+  if (isEphemeralFlags(data.flags) || interaction.deferred_ephemeral) {
+    const payload = await sendInteractionEphemeral(interaction.user, interaction.channel, req.userId, data);
+    return res.json({ ephemeral: payload });
+  }
+
+  const created = await createBotMessageInChannel(ch, req.userId, data);
+  interaction.original_response_message_id = created.message._id;
+  await interaction.save();
+  res.json(created.payload);
 });
 
 // DELETE /bot/channels/:target/messages/:msg
@@ -386,6 +746,49 @@ router.delete('/channels/:target/messages/:msg/reactions/:emoji', botAuth, async
 
 // --- Server moderation (same permission rules as /servers/* for user sessions) ---
 
+// GET /bot/users/:target
+router.get('/users/:target', botAuth, async (req, res) => {
+  const user = await User.findById(req.params.target).lean();
+  if (!user) return res.status(404).json({ type: 'NotFound', error: 'User not found' });
+  res.json(toPublicUser(user, { relationship: 'None', online: isUserOnlineDisplay(user._id, user) }));
+});
+
+// GET /bot/servers/:target
+router.get('/servers/:target', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  const channels = await Channel.find({ _id: { $in: ctx.server.channels } }).lean();
+  const roles = roleEntries(ctx.server).sort((a, b) => b.rank - a.rank);
+  res.json({
+    ...ctx.server.toObject(),
+    channels: ctx.server.channels.map((id) => channels.find((c) => c._id === id) || id),
+    roles,
+  });
+});
+
+// GET /bot/servers/:target/channels
+router.get('/servers/:target/channels', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  const channels = await Channel.find({ _id: { $in: ctx.server.channels } }).lean();
+  res.json(channels);
+});
+
+// GET /bot/servers/:target/roles
+router.get('/servers/:target/roles', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  const roles = roleEntries(ctx.server).sort((a, b) => b.rank - a.rank);
+  res.json(roles);
+});
+
+// GET /bot/servers/:target/permissions
+router.get('/servers/:target/permissions', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  res.json({ permissions: ctx.perms });
+});
+
 // GET /bot/servers/:target/members
 router.get('/servers/:target/members', botAuth, async (req, res) => {
   const ctx = await getBotServerContext(req, res, req.params.target);
@@ -405,6 +808,78 @@ router.get('/servers/:target/members', botAuth, async (req, res) => {
       joined_at: m.joined_at,
     })),
   );
+});
+
+// GET /bot/servers/:target/members/:member
+router.get('/servers/:target/members/:member', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  const member = await Member.findOne({ _id: req.params.member, server: ctx.server._id }).lean();
+  if (!member) return res.status(404).json({ type: 'NotFound', error: 'Member not found' });
+  const user = await User.findById(member.user).lean();
+  res.json({
+    ...member,
+    user: user ? toPublicUser(user, { relationship: 'None', online: isUserOnlineDisplay(member.user, user) }) : member.user,
+  });
+});
+
+// PATCH /bot/servers/:target/members/:member
+router.patch('/servers/:target/members/:member', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  const targetMember = await Member.findOne({ server: ctx.server._id, _id: req.params.member });
+  if (!targetMember) return res.status(404).json({ type: 'NotFound', error: 'Member not found' });
+
+  const delegated = ownerDelegated(req, ctx.server);
+  const isSelf = sameId(targetMember.user, req.userId);
+  const { nickname, roles } = req.body || {};
+
+  if (nickname !== undefined) {
+    if (!isSelf && !delegated && !hasPermission(ctx.perms, Permissions.MANAGE_NICKNAMES)) {
+      return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_NICKNAMES permission' });
+    }
+    if (!isSelf && !delegated && !outranks(ctx.server, ctx.member, targetMember)) {
+      return res.status(403).json({ type: 'Forbidden', error: 'Cannot manage higher-ranked member' });
+    }
+    targetMember.nickname = nickname;
+  }
+
+  if (roles !== undefined) {
+    if (!delegated && !hasPermission(ctx.perms, Permissions.MANAGE_ROLES)) {
+      return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_ROLES permission' });
+    }
+    if (!delegated && !isSelf && !outranks(ctx.server, ctx.member, targetMember)) {
+      return res.status(403).json({ type: 'Forbidden', error: 'Cannot manage higher-ranked member' });
+    }
+    const newRoles = Array.isArray(roles) ? roles : [];
+    if (!delegated) {
+      for (const roleId of newRoles) {
+        if (!canManageRole(ctx.server, ctx.member, roleId)) {
+          return res.status(403).json({ type: 'Forbidden', error: 'Cannot assign role above your rank' });
+        }
+      }
+    }
+    targetMember.roles = newRoles;
+  }
+
+  await targetMember.save();
+  res.json(targetMember.toObject());
+});
+
+// GET /bot/servers/:target/bans
+router.get('/servers/:target/bans', botAuth, async (req, res) => {
+  const ctx = await getBotServerContext(req, res, req.params.target);
+  if (!ctx) return;
+  const delegated = ownerDelegated(req, ctx.server);
+  if (!delegated && !hasPermission(ctx.perms, Permissions.BAN_MEMBERS)) {
+    return res.status(403).json({
+      type: 'Forbidden',
+      error: 'You need the Ban Members permission (or Administrator) to view bans.',
+      code: 'MISSING_BAN_MEMBERS',
+    });
+  }
+  const bans = await ServerBan.find({ server: ctx.server._id }).populate('user', '_id username discriminator').lean();
+  res.json({ bans: bans.map((b) => ({ ...b, user: b.user })) });
 });
 
 // DELETE /bot/servers/:target/members/:member

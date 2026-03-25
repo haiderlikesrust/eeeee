@@ -154,7 +154,7 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   if (canManageMembers) availableTabs.push('members');
   availableTabs.push('invites');
   if (canBan) availableTabs.push('bans');
-  if (canManageServer) availableTabs.push('wordfilter', 'auditlog');
+  if (canManageServer) availableTabs.push('automod', 'events', 'auditlog');
   const uniqueTabs = [...new Set(availableTabs)];
 
   const [tab, setTab] = useState(uniqueTabs[0] || 'overview');
@@ -196,8 +196,24 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const [emojiUploading, setEmojiUploading] = useState(false);
   const iconInputRef = useRef(null);
   const emojiInputRef = useRef(null);
-  const [wordFilter, setWordFilter] = useState(server?.word_filter || []);
+  const [wordFilter, setWordFilter] = useState(server?.automod?.blocked_words || server?.word_filter || []);
+  const [automod, setAutomod] = useState({
+    enabled: !!server?.automod?.enabled,
+    blocked_words: server?.automod?.blocked_words || server?.word_filter || [],
+    block_invites: !!server?.automod?.block_invites,
+    max_mentions: Number(server?.automod?.max_mentions || 0),
+  });
   const [newWord, setNewWord] = useState('');
+  const [events, setEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventSaving, setEventSaving] = useState(false);
+  const [eventDraft, setEventDraft] = useState({
+    title: '',
+    description: '',
+    location: '',
+    starts_at: '',
+    ends_at: '',
+  });
   const [auditLogs, setAuditLogs] = useState([]);
   const [transferTargetId, setTransferTargetId] = useState('');
   const [transferSubmitting, setTransferSubmitting] = useState(false);
@@ -226,6 +242,17 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   }, [server?.locked]);
 
   useEffect(() => {
+    const blockedWords = server?.automod?.blocked_words || server?.word_filter || [];
+    setWordFilter(blockedWords);
+    setAutomod({
+      enabled: !!server?.automod?.enabled,
+      blocked_words: blockedWords,
+      block_invites: !!server?.automod?.block_invites,
+      max_mentions: Number(server?.automod?.max_mentions || 0),
+    });
+  }, [server?.automod, server?.word_filter]);
+
+  useEffect(() => {
     setTransferTargetId('');
   }, [serverId]);
 
@@ -241,7 +268,8 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
     if (tab === 'channels') { loadChannels(); fetchRoles(); }
     if (tab === 'permissions') fetchRoles();
     if (tab === 'emojis') loadEmojis();
-    if (tab === 'wordfilter') setWordFilter(server?.word_filter || []);
+    if (tab === 'automod') loadAutomod();
+    if (tab === 'events') loadEvents();
     if (tab === 'auditlog') loadAuditLog();
   }, [tab]);
 
@@ -271,6 +299,30 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const loadInvites = async () => { try { const res = await get(`/servers/${serverId}/invites`); setInvites(res || []); } catch {} };
   const loadMembers = async () => { try { const res = await get(`/servers/${serverId}/members`); setMembers(res || []); } catch {} };
   const loadEmojis = async () => { try { const res = await get(`/servers/${serverId}/emojis`); setEmojis(res || []); } catch {} };
+  const loadAutomod = async () => {
+    try {
+      const res = await get(`/servers/${serverId}/automod`);
+      const blockedWords = Array.isArray(res?.blocked_words) ? res.blocked_words : [];
+      setWordFilter(blockedWords);
+      setAutomod({
+        enabled: !!res?.enabled,
+        blocked_words: blockedWords,
+        block_invites: !!res?.block_invites,
+        max_mentions: Number(res?.max_mentions || 0),
+      });
+    } catch {}
+  };
+
+  const loadEvents = async () => {
+    setEventsLoading(true);
+    try {
+      const res = await get(`/servers/${serverId}/events?mode=all`);
+      setEvents(Array.isArray(res) ? res : []);
+    } catch {
+      setEvents([]);
+    }
+    setEventsLoading(false);
+  };
   const handleEmojiUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file || !newEmojiName.trim()) return;
@@ -525,28 +577,86 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
     }
   };
 
-  const addFilterWord = async () => {
-    const w = newWord.trim();
-    if (!w || wordFilter.includes(w)) return;
-    const updated = [...wordFilter, w];
+  const saveAutomod = async (nextAutomod = automod) => {
     try {
-      await patch(`/servers/${serverId}`, { word_filter: updated });
-      setWordFilter(updated);
-      setNewWord('');
-      toast.success('Word added to filter');
+      const payload = {
+        enabled: !!nextAutomod.enabled,
+        blocked_words: Array.isArray(nextAutomod.blocked_words) ? nextAutomod.blocked_words : [],
+        block_invites: !!nextAutomod.block_invites,
+        max_mentions: Math.max(0, Math.min(30, Number(nextAutomod.max_mentions) || 0)),
+      };
+      const updated = await patch(`/servers/${serverId}/automod`, payload);
+      const blockedWords = Array.isArray(updated?.blocked_words) ? updated.blocked_words : [];
+      setWordFilter(blockedWords);
+      setAutomod({
+        enabled: !!updated?.enabled,
+        blocked_words: blockedWords,
+        block_invites: !!updated?.block_invites,
+        max_mentions: Number(updated?.max_mentions || 0),
+      });
+      toast.success('Automod settings saved');
     } catch (err) {
-      toast.error(getErrMsg(err, 'Failed to update word filter'));
+      toast.error(getErrMsg(err, 'Failed to save automod settings'));
     }
   };
 
+  const addFilterWord = async () => {
+    const w = newWord.trim().toLowerCase();
+    if (!w || wordFilter.includes(w)) return;
+    const updatedWords = [...wordFilter, w];
+    const nextAutomod = { ...automod, blocked_words: updatedWords };
+    setAutomod(nextAutomod);
+    setWordFilter(updatedWords);
+    setNewWord('');
+    await saveAutomod(nextAutomod);
+  };
+
   const removeFilterWord = async (word) => {
-    const updated = wordFilter.filter((w) => w !== word);
+    const updatedWords = wordFilter.filter((w) => w !== word);
+    const nextAutomod = { ...automod, blocked_words: updatedWords };
+    setAutomod(nextAutomod);
+    setWordFilter(updatedWords);
+    await saveAutomod(nextAutomod);
+  };
+
+  const createEvent = async () => {
+    if (!eventDraft.title.trim() || !eventDraft.starts_at) return;
+    setEventSaving(true);
     try {
-      await patch(`/servers/${serverId}`, { word_filter: updated });
-      setWordFilter(updated);
-      toast.success('Word removed from filter');
+      await post(`/servers/${serverId}/events`, {
+        title: eventDraft.title.trim(),
+        description: eventDraft.description.trim(),
+        location: eventDraft.location.trim(),
+        starts_at: new Date(eventDraft.starts_at).toISOString(),
+        ends_at: eventDraft.ends_at ? new Date(eventDraft.ends_at).toISOString() : null,
+      });
+      setEventDraft({ title: '', description: '', location: '', starts_at: '', ends_at: '' });
+      await loadEvents();
+      toast.success('Event created');
     } catch (err) {
-      toast.error(getErrMsg(err, 'Failed to update word filter'));
+      toast.error(getErrMsg(err, 'Failed to create event'));
+    }
+    setEventSaving(false);
+  };
+
+  const deleteEvent = async (eventId) => {
+    if (!confirm('Delete this event?')) return;
+    try {
+      await del(`/servers/${serverId}/events/${eventId}`);
+      setEvents((prev) => prev.filter((ev) => ev._id !== eventId));
+      toast.success('Event deleted');
+    } catch (err) {
+      toast.error(getErrMsg(err, 'Failed to delete event'));
+    }
+  };
+
+  const setEventRsvp = async (eventId, status) => {
+    try {
+      const updated = await put(`/servers/${serverId}/events/${eventId}/rsvp`, { status });
+      setEvents((prev) => prev.map((ev) => (ev._id === eventId ? updated : ev)));
+      toast.success('RSVP updated');
+    } catch (err) {
+      toast.error(getErrMsg(err, 'Failed to update RSVP'));
     }
   };
 
@@ -570,7 +680,8 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
           {uniqueTabs.includes('members') && <div className={`settings-tab ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</div>}
           {uniqueTabs.includes('invites') && <div className={`settings-tab ${tab === 'invites' ? 'active' : ''}`} onClick={() => setTab('invites')}>Invites</div>}
           {uniqueTabs.includes('bans') && <div className={`settings-tab ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</div>}
-          {uniqueTabs.includes('wordfilter') && <div className={`settings-tab ${tab === 'wordfilter' ? 'active' : ''}`} onClick={() => setTab('wordfilter')}>Word Filter</div>}
+          {uniqueTabs.includes('automod') && <div className={`settings-tab ${tab === 'automod' ? 'active' : ''}`} onClick={() => setTab('automod')}>Automod</div>}
+          {uniqueTabs.includes('events') && <div className={`settings-tab ${tab === 'events' ? 'active' : ''}`} onClick={() => setTab('events')}>Events</div>}
           {uniqueTabs.includes('auditlog') && <div className={`settings-tab ${tab === 'auditlog' ? 'active' : ''}`} onClick={() => setTab('auditlog')}>Audit Log</div>}
           <div className="settings-separator" />
           <div className="settings-tab close-tab" onClick={onClose}>
@@ -908,10 +1019,56 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
             </div>
           )}
 
-          {tab === 'wordfilter' && (
+          {tab === 'automod' && (
             <div className="settings-section">
-              <h2>Word Filter</h2>
-              <p className="settings-hint">Messages containing these words will be blocked automatically.</p>
+              <h2>Automod</h2>
+              <p className="settings-hint">Automatically block invite spam, mention abuse, and blocked words.</p>
+              <div className="settings-toggle-row">
+                <div className="settings-toggle-info">
+                  <span className="settings-toggle-label">Enable automod</span>
+                  <span className="settings-toggle-desc">When enabled, mention and invite limits are enforced.</span>
+                </div>
+                <button
+                  type="button"
+                  className={`perm-toggle ${automod.enabled ? 'on' : 'off'}`}
+                  onClick={() => {
+                    const next = { ...automod, enabled: !automod.enabled, blocked_words: wordFilter };
+                    setAutomod(next);
+                    saveAutomod(next);
+                  }}
+                >
+                  <span className="perm-toggle-track"><span className="perm-toggle-thumb" /></span>
+                </button>
+              </div>
+              <div className="settings-toggle-row">
+                <div className="settings-toggle-info">
+                  <span className="settings-toggle-label">Block invite links</span>
+                  <span className="settings-toggle-desc">Block common invite URL patterns in messages.</span>
+                </div>
+                <button
+                  type="button"
+                  className={`perm-toggle ${automod.block_invites ? 'on' : 'off'}`}
+                  onClick={() => {
+                    const next = { ...automod, block_invites: !automod.block_invites, blocked_words: wordFilter };
+                    setAutomod(next);
+                    saveAutomod(next);
+                  }}
+                >
+                  <span className="perm-toggle-track"><span className="perm-toggle-thumb" /></span>
+                </button>
+              </div>
+              <label className="auth-label">
+                <span>MAX MENTIONS PER MESSAGE</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="30"
+                  value={automod.max_mentions}
+                  onChange={(e) => setAutomod((a) => ({ ...a, max_mentions: Math.max(0, Math.min(30, Number(e.target.value) || 0)), blocked_words: wordFilter }))}
+                  onBlur={() => saveAutomod({ ...automod, blocked_words: wordFilter })}
+                />
+              </label>
+              <h3>Blocked words</h3>
               <div className="settings-add-row">
                 <input value={newWord} onChange={(e) => setNewWord(e.target.value)} placeholder="Add blocked word..." onKeyDown={(e) => e.key === 'Enter' && addFilterWord()} />
                 <button className="modal-btn primary" onClick={addFilterWord}>Add</button>
@@ -921,10 +1078,83 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
                 {wordFilter.map((w) => (
                   <span key={w} className="settings-tag">
                     {w}
-                    <button className="settings-tag-remove" onClick={() => removeFilterWord(w)} aria-label="Remove">×</button>
+                    <button className="settings-tag-remove" onClick={() => removeFilterWord(w)} aria-label="Remove">x</button>
                   </span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {tab === 'events' && (
+            <div className="settings-section">
+              <h2>Server Events</h2>
+              <p className="settings-hint">Plan events and let members RSVP from this panel.</p>
+              <div className="settings-add-row">
+                <input
+                  value={eventDraft.title}
+                  onChange={(e) => setEventDraft((d) => ({ ...d, title: e.target.value }))}
+                  placeholder="Event title"
+                />
+                <input
+                  type="datetime-local"
+                  value={eventDraft.starts_at}
+                  onChange={(e) => setEventDraft((d) => ({ ...d, starts_at: e.target.value }))}
+                />
+                <button className="modal-btn primary" onClick={createEvent} disabled={eventSaving || !eventDraft.title.trim() || !eventDraft.starts_at}>
+                  {eventSaving ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+              <div className="settings-add-row">
+                <input
+                  value={eventDraft.location}
+                  onChange={(e) => setEventDraft((d) => ({ ...d, location: e.target.value }))}
+                  placeholder="Location or channel"
+                />
+                <input
+                  type="datetime-local"
+                  value={eventDraft.ends_at}
+                  onChange={(e) => setEventDraft((d) => ({ ...d, ends_at: e.target.value }))}
+                />
+              </div>
+              <textarea
+                className="settings-textarea"
+                rows={2}
+                value={eventDraft.description}
+                onChange={(e) => setEventDraft((d) => ({ ...d, description: e.target.value }))}
+                placeholder="Description (optional)"
+              />
+
+              {eventsLoading ? (
+                <p className="settings-empty">Loading events...</p>
+              ) : events.length === 0 ? (
+                <p className="settings-empty">No events yet</p>
+              ) : (
+                events
+                  .slice()
+                  .sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at))
+                  .map((ev) => (
+                    <div key={ev._id} className="settings-list-item">
+                      <div className="settings-list-info">
+                        <span className="settings-list-name">{ev.title}</span>
+                        <span className="settings-list-sub">
+                          {new Date(ev.starts_at).toLocaleString()}
+                          {ev.ends_at ? ` - ${new Date(ev.ends_at).toLocaleString()}` : ''}
+                        </span>
+                        {ev.location && <span className="settings-list-sub">{ev.location}</span>}
+                        {ev.description && <span className="settings-list-sub">{ev.description}</span>}
+                        <span className="settings-list-sub">
+                          RSVP: Yes {ev.rsvp?.counts?.yes || 0} / Maybe {ev.rsvp?.counts?.maybe || 0} / No {ev.rsvp?.counts?.no || 0}
+                        </span>
+                      </div>
+                      <div className="settings-member-actions">
+                        <button className="settings-warn-btn" onClick={() => setEventRsvp(ev._id, 'yes')}>Yes</button>
+                        <button className="settings-warn-btn" onClick={() => setEventRsvp(ev._id, 'maybe')}>Maybe</button>
+                        <button className="settings-warn-btn" onClick={() => setEventRsvp(ev._id, 'no')}>No</button>
+                        <button className="settings-danger-btn" onClick={() => deleteEvent(ev._id)}>Delete</button>
+                      </div>
+                    </div>
+                  ))
+              )}
             </div>
           )}
 

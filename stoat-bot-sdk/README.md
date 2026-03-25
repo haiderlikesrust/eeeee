@@ -9,6 +9,8 @@ The SDK now includes:
 - reaction helpers (`addReaction`, `removeReaction`)
 - event constants (`GatewayEvents`)
 - embed builder (`EmbedBuilder`)
+- component builders (`ActionRowBuilder`, `ButtonBuilder`, `SelectMenuBuilder`, `TextInputBuilder`, `ModalBuilder`)
+- interaction response helpers (callbacks, deferred replies, follow-ups, edit original)
 
 ## Install
 
@@ -23,6 +25,10 @@ import {
   StoatBotClient,
   GatewayIntents,
   GatewayEvents,
+  ActionRowBuilder,
+  ButtonBuilder,
+  SelectMenuBuilder,
+  ButtonStyle,
   EmbedBuilder,
 } from './src/index.js';
 
@@ -46,12 +52,81 @@ bot.command('help', async ({ reply }) => {
     .setDescription('Use !ping')
     .setColor('#10b981')
     .setTimestamp();
-  await reply({ embeds: [embed.toJSON()] });
+  await reply({
+    embeds: [embed.toJSON()],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('help_prev').setLabel('Prev').setStyle(ButtonStyle.SECONDARY).setDisabled(true),
+        new ButtonBuilder().setCustomId('help_next').setLabel('Next').setStyle(ButtonStyle.PRIMARY),
+      ).toJSON(),
+    ],
+  });
 }, { description: 'Show help' });
+
+bot.on(GatewayEvents.INTERACTION_CREATE, async (interaction) => {
+  if (interaction?.component?.custom_id === 'help_next') {
+    await bot.createInteractionResponse(interaction.id, interaction.token, {
+      type: 7,
+      data: { content: 'Help page 2' },
+    });
+  }
+});
 
 bot.startCommandRouter();
 
 await bot.connect();
+```
+
+## Interaction 2.0
+
+```js
+import {
+  ActionRowBuilder,
+  SelectMenuBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+} from './src/index.js';
+
+bot.on(GatewayEvents.INTERACTION_CREATE, async (interaction) => {
+  if (interaction.type === 'application_command' && interaction.command?.name === 'report') {
+    const modal = new ModalBuilder()
+      .setCustomId('report_modal')
+      .setTitle('Report user')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('reason')
+            .setLabel('Reason')
+            .setStyle(TextInputStyle.PARAGRAPH)
+            .setRequired(true),
+        ),
+      );
+    await bot.createInteractionResponse(interaction.id, interaction.token, { type: 9, data: modal.toJSON() });
+    return;
+  }
+
+  if (interaction.type === 'modal_submit') {
+    await bot.deferInteraction(interaction.id, interaction.token, { ephemeral: true });
+    await bot.editInteractionOriginal(interaction.id, interaction.token, { content: 'Thanks, report received.' });
+    return;
+  }
+
+  if (interaction.type === 'message_component' && interaction.component?.custom_id === 'pick_reason') {
+    await bot.createInteractionFollowup(interaction.id, interaction.token, {
+      content: `Selected: ${(interaction.component.values || []).join(', ')}`,
+      flags: 64,
+    });
+  }
+});
+
+const menu = new SelectMenuBuilder()
+  .setCustomId('pick_reason')
+  .setPlaceholder('Choose a reason')
+  .addOptions(
+    { label: 'Spam', value: 'spam' },
+    { label: 'Harassment', value: 'harassment' },
+  );
 ```
 
 ## Command Router
@@ -123,12 +198,27 @@ await bot.sendEmbed(channelId, embed);
 
 - `GET /bot/@me` - bot + user info
 - `GET /bot/gateway` - gateway url + intents
+- `GET /bot/users/:id` - public user info
+- `GET /bot/servers/:id` - server metadata + channels + roles
+- `GET /bot/servers/:id/channels`
+- `GET /bot/servers/:id/roles`
+- `GET /bot/servers/:id/permissions`
 - `GET /bot/channels/:target/messages`
 - `POST /bot/channels/:target/messages`
 - `PATCH /bot/channels/:target/messages/:msg`
 - `DELETE /bot/channels/:target/messages/:msg`
 - `PUT /bot/channels/:target/messages/:msg/reactions/:emoji`
 - `DELETE /bot/channels/:target/messages/:msg/reactions/:emoji`
+- `GET /bot/servers/:id/members`
+- `GET /bot/servers/:id/members/:memberId`
+- `PATCH /bot/servers/:id/members/:memberId` - nickname/roles (permission + hierarchy checked)
+- `DELETE /bot/servers/:id/members/:memberId` - kick
+- `GET /bot/servers/:id/bans`
+- `PUT /bot/servers/:id/bans/:userId` - ban
+- `DELETE /bot/servers/:id/bans/:userId` - unban
+- `POST /bot/interactions/:id/:token/callback` - interaction callback (`type` 4,5,6,7,9)
+- `POST /bot/interactions/:id/:token/followups` - follow-up message
+- `PATCH /bot/interactions/:id/:token/original` - edit/create original response after defer
 
 Auth header:
 
@@ -157,6 +247,7 @@ Current events:
 - `MESSAGE_DELETE`
 - `MESSAGE_REACTION_ADD`
 - `MESSAGE_REACTION_REMOVE`
+- `INTERACTION_CREATE`
 
 You can use constants from `GatewayEvents` in the SDK (e.g. `GatewayEvents.SERVER_MEMBER_JOIN`).
 

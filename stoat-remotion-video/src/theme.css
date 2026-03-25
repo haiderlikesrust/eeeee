@@ -1,0 +1,31 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
+
+/* Mirrors stoat-frontend/src/index.css :root — scoped for Remotion scenes */
+.stoat-remotion-root {
+  --bg-primary: #1a1d24;
+  --bg-secondary: #14161b;
+  --bg-tertiary: #0f1115;
+  --bg-floating: #1e2129;
+  --bg-modifier-hover: rgba(255, 255, 255, 0.04);
+  --bg-modifier-active: rgba(255, 255, 255, 0.08);
+  --bg-modifier-selected: rgba(255, 255, 255, 0.1);
+  --text-normal: #c9cdd3;
+  --text-muted: #6b7280;
+  --text-link: #38bdf8;
+  --header-primary: #e8eaed;
+  --header-secondary: #9ca3af;
+  --accent: #10b981;
+  --accent-hover: #059669;
+  --accent-muted: rgba(16, 185, 129, 0.15);
+  --accent-glow: rgba(16, 185, 129, 0.25);
+  --accent-secondary: #6366f1;
+  --input-bg: rgba(255, 255, 255, 0.05);
+  --input-border: rgba(255, 255, 255, 0.08);
+  --verified-bot-bg: rgba(88, 101, 242, 0.22);
+  --verified-bot-text: #a5b4fc;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}

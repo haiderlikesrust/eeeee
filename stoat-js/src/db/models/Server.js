@@ -21,6 +21,29 @@ const roleSchema = new mongoose.Schema({
   rank: { type: Number, default: 0 },
 }, { _id: false });
 
+const automodSchema = new mongoose.Schema({
+  enabled: { type: Boolean, default: false },
+  blocked_words: { type: [String], default: [] },
+  block_invites: { type: Boolean, default: false },
+  max_mentions: { type: Number, default: 0 },
+}, { _id: false });
+
+const serverEventSchema = new mongoose.Schema({
+  _id: { type: String, required: true },
+  title: { type: String, required: true },
+  description: { type: String, default: '' },
+  location: { type: String, default: '' },
+  channel_id: { type: String, default: null },
+  starts_at: { type: Date, required: true },
+  ends_at: Date,
+  creator: { type: String, required: true, ref: 'User' },
+  rsvp_yes: { type: [String], default: [] },
+  rsvp_no: { type: [String], default: [] },
+  rsvp_maybe: { type: [String], default: [] },
+  created_at: { type: Date, default: Date.now },
+  updated_at: { type: Date, default: Date.now },
+}, { _id: false });
+
 const serverSchema = new mongoose.Schema({
   _id: { type: String, required: true },
   owner: { type: String, required: true, ref: 'User' },
@@ -36,6 +59,8 @@ const serverSchema = new mongoose.Schema({
   nsfw: { type: Boolean, default: false },
   locked: { type: Boolean, default: false },
   word_filter: { type: [String], default: [] },
+  automod: { type: automodSchema, default: () => ({}) },
+  events: { type: [serverEventSchema], default: [] },
 }, { id: false });
 
 export default mongoose.model('Server', serverSchema);

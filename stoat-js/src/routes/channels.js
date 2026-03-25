@@ -2,12 +2,12 @@ import { Router } from 'express';
 import { ulid } from 'ulid';
 import crypto from 'crypto';
 import {
-  Channel, Message, Member, User, Invite, Webhook, ChannelUnread, Server, Bot, WhiteboardSession,
+  Channel, Message, Member, User, Invite, Webhook, ChannelUnread, Server, Bot, WhiteboardSession, Interaction,
 } from '../db/models/index.js';
 import { createRoom } from '../whiteboardRooms.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { toPublicUser } from '../publicUser.js';
-import { broadcastToChannel, broadcastToServer, GatewayIntents, isUserOnlineDisplay } from '../events.js';
+import { broadcastToChannel, broadcastToServer, broadcastToUser, GatewayIntents, isUserOnlineDisplay } from '../events.js';
 import { notifyPushForNewMessage } from '../pushNotify.js';
 import { fetchLinkPreviewsForContent } from '../linkPreview.js';
 import {
@@ -17,8 +17,9 @@ import {
 import { parseSlashContent } from '../slash/parse.js';
 import { runBuiltinHandler, listBuiltinCommandsForApi } from '../slash/builtin.js';
 import { findBotsWithSlashCommand } from '../slash/resolve.js';
-import { postSlashInteraction } from '../slash/botInteraction.js';
+import { postBotInteraction } from '../slash/botInteraction.js';
 import { getOfficialClawUserId } from '../officialClaw.js';
+import { translateMessageContent } from '../translate.js';
 
 const router = Router();
 
@@ -49,6 +50,170 @@ async function getChannelPerms(ch, userId) {
   return { perms: computeChannelPermissions(server, member, ch), server, member };
 }
 
+function mentionCountFromContent(content) {
+  if (!content) return 0;
+  const matches = String(content).match(/<@[!&]?[a-zA-Z0-9]+>|@everyone|@here/g);
+  return matches ? matches.length : 0;
+}
+
+function hasInviteLink(content) {
+  if (!content) return false;
+  return /(discord\.gg\/|discord\.com\/invite\/|discordapp\.com\/invite\/|\/invite\/[a-z0-9_-]{4,})/i.test(String(content));
+}
+
+const BUTTON_STYLE_MAP = {
+  1: 'primary',
+  2: 'secondary',
+  3: 'success',
+  4: 'danger',
+  5: 'link',
+};
+
+function normalizeButtonStyle(style) {
+  if (Number.isFinite(Number(style)) && BUTTON_STYLE_MAP[Number(style)]) return BUTTON_STYLE_MAP[Number(style)];
+  const s = String(style || '').trim().toLowerCase();
+  if (['primary', 'secondary', 'success', 'danger', 'link'].includes(s)) return s;
+  return 'secondary';
+}
+
+function normalizeComponents(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const normalizedRows = [];
+  const normalizeOne = (componentLike) => {
+    if (!componentLike || typeof componentLike !== 'object') return null;
+    const typeRaw = String(componentLike.type || '').toLowerCase();
+    const isSelectType = typeRaw === 'select'
+      || typeRaw === 'string_select'
+      || typeRaw === 'select_menu'
+      || Number(componentLike.type) === 3
+      || Array.isArray(componentLike.options);
+
+    if (isSelectType) {
+      const customId = String(componentLike.custom_id || componentLike.customId || '').slice(0, 100);
+      if (!customId) return null;
+      const optionsIn = Array.isArray(componentLike.options) ? componentLike.options : [];
+      const options = optionsIn.slice(0, 25).map((opt) => ({
+        label: String(opt?.label || '').slice(0, 100),
+        value: String(opt?.value || '').slice(0, 100),
+        description: opt?.description != null ? String(opt.description).slice(0, 100) : undefined,
+        default: !!opt?.default,
+      })).filter((opt) => opt.label && opt.value);
+      if (options.length === 0) return null;
+      const minValues = Math.max(0, Math.min(options.length, Number(componentLike.min_values ?? componentLike.minValues ?? 1) || 1));
+      const maxValues = Math.max(minValues, Math.min(options.length, Number(componentLike.max_values ?? componentLike.maxValues ?? 1) || 1));
+      return {
+        type: 'select',
+        custom_id: customId,
+        placeholder: componentLike.placeholder != null ? String(componentLike.placeholder).slice(0, 100) : undefined,
+        min_values: minValues,
+        max_values: maxValues,
+        disabled: !!componentLike.disabled,
+        options,
+      };
+    }
+
+    const style = normalizeButtonStyle(componentLike.style);
+    const label = String(componentLike.label || '').slice(0, 80);
+    const disabled = !!componentLike.disabled;
+    const isLink = style === 'link';
+    const customId = !isLink ? String(componentLike.custom_id || componentLike.customId || '').slice(0, 100) : '';
+    const url = isLink ? String(componentLike.url || '').trim().slice(0, 512) : '';
+    if (isLink && !/^https?:\/\//i.test(url)) return null;
+    if (!isLink && !customId) return null;
+    return {
+      type: 'button',
+      style,
+      label,
+      custom_id: customId || undefined,
+      url: url || undefined,
+      disabled,
+    };
+  };
+
+  const pushComponent = (targetRow, componentLike) => {
+    if (!targetRow || targetRow.components.length >= 5) return;
+    const c = normalizeOne(componentLike);
+    if (!c) return;
+    targetRow.components.push(c);
+  };
+
+  const ensureRow = () => {
+    const last = normalizedRows[normalizedRows.length - 1];
+    if (last && last.components.length < 5) return last;
+    if (normalizedRows.length >= 5) return null;
+    const row = { type: 'action_row', components: [] };
+    normalizedRows.push(row);
+    return row;
+  };
+
+  for (const rowLike of raw.slice(0, 25)) {
+    if (!rowLike || typeof rowLike !== 'object') continue;
+    const rowButtons = Array.isArray(rowLike.components) ? rowLike.components : null;
+    if (rowButtons) {
+      const row = ensureRow();
+      if (!row) break;
+      for (const componentLike of rowButtons.slice(0, 5)) pushComponent(row, componentLike);
+      continue;
+    }
+    const row = ensureRow();
+    if (!row) break;
+    pushComponent(row, rowLike);
+  }
+
+  return normalizedRows.filter((r) => Array.isArray(r.components) && r.components.length > 0);
+}
+
+function findComponentByCustomId(components, customId) {
+  const rows = normalizeComponents(components);
+  for (const row of rows) {
+    for (const component of row.components) {
+      if (component?.custom_id && String(component.custom_id) === String(customId)) return component;
+    }
+  }
+  return null;
+}
+
+function normalizeModalPayload(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const customId = String(raw.custom_id || raw.customId || '').slice(0, 100);
+  const title = String(raw.title || '').slice(0, 45);
+  const rowLikes = Array.isArray(raw.components) ? raw.components : [];
+  if (!customId || !title) return null;
+  const components = [];
+  for (const rowLike of rowLikes.slice(0, 5)) {
+    const fields = Array.isArray(rowLike?.components) ? rowLike.components : [];
+    const field = fields[0];
+    if (!field || typeof field !== 'object') continue;
+    const typeRaw = String(field.type || '').toLowerCase();
+    if (!(typeRaw === 'text_input' || Number(field.type) === 4)) continue;
+    const fieldCustomId = String(field.custom_id || field.customId || '').slice(0, 100);
+    if (!fieldCustomId) continue;
+    const styleRaw = String(field.style || '').toLowerCase();
+    const style = (styleRaw === 'paragraph' || Number(field.style) === 2) ? 'paragraph' : 'short';
+    components.push({
+      type: 'action_row',
+      components: [{
+        type: 'text_input',
+        custom_id: fieldCustomId,
+        label: String(field.label || '').slice(0, 45) || 'Input',
+        style,
+        min_length: Math.max(0, Math.min(4000, Number(field.min_length ?? field.minLength ?? 0) || 0)),
+        max_length: Math.max(1, Math.min(4000, Number(field.max_length ?? field.maxLength ?? 4000) || 4000)),
+        required: field.required !== false,
+        placeholder: field.placeholder != null ? String(field.placeholder).slice(0, 100) : undefined,
+        value: field.value != null ? String(field.value).slice(0, 4000) : undefined,
+      }],
+    });
+  }
+  if (components.length === 0) return null;
+  return { custom_id: customId, title, components };
+}
+
+function isEphemeralFlags(flags) {
+  const n = Number(flags) || 0;
+  return (n & 64) === 64;
+}
+
 export function messageToJson(m, authorMap = {}, replyContext = null) {
   const a = m.author && authorMap[m.author];
   const reactions = m.reactions instanceof Map
@@ -65,6 +230,7 @@ export function messageToJson(m, authorMap = {}, replyContext = null) {
     attachments: m.attachments || [],
     edited: m.edited,
     embeds: m.embeds || [],
+    components: m.components || [],
     link_previews: m.link_previews || [],
     mentions: m.mentions || [],
     replies: m.replies || [],
@@ -100,6 +266,142 @@ export async function fetchReplyContext(replyIds, authorMap) {
       attachments: (rm.attachments || []).length > 0 ? [{ type: 'file' }] : [],
     };
   });
+}
+
+async function sendInteractionEphemeral(userId, channelId, botId, data = {}) {
+  const content = String(data?.content || '').slice(0, 2000);
+  const embeds = Array.isArray(data?.embeds) ? data.embeds : [];
+  const components = normalizeComponents(data?.components || []);
+  const payload = {
+    id: ulid(),
+    channel_id: channelId,
+    bot_id: botId,
+    content,
+    embeds,
+    components,
+    created_at: new Date().toISOString(),
+  };
+  broadcastToUser(userId, { type: 'INTERACTION_EPHEMERAL_CREATE', d: payload });
+  return payload;
+}
+
+async function createBotMessageInChannel(ch, botId, data = {}) {
+  const channelId = ch?._id || ch;
+  const msgId = ulid();
+  const msg = await Message.create({
+    _id: msgId,
+    channel: channelId,
+    author: botId,
+    content: String(data?.content || '').slice(0, 2000),
+    embeds: Array.isArray(data?.embeds) ? data.embeds : [],
+    components: normalizeComponents(data?.components || []),
+    mentions: [],
+    replies: [],
+  });
+  await Channel.updateOne({ _id: channelId }, { $set: { last_message_id: msgId } });
+  const author = await User.findById(botId)
+    .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+    .lean();
+  const payload = messageToJson(msg, { [botId]: author });
+  await broadcastToChannel(channelId, { type: 'MESSAGE_CREATE', d: payload }, {
+    eventIntent: GatewayIntents.GUILD_MESSAGES,
+  });
+  notifyPushForNewMessage(ch, botId, payload);
+  return { message: msg, payload };
+}
+
+async function updateBotMessageInChannel(ch, botId, messageId, data = {}) {
+  const channelId = ch?._id || ch;
+  const msg = await Message.findOne({ _id: messageId, channel: channelId, author: botId });
+  if (!msg) return null;
+  if (data.content != null) msg.content = String(data.content).slice(0, 2000);
+  if (data.embeds != null) msg.embeds = Array.isArray(data.embeds) ? data.embeds : [];
+  if (data.components != null) msg.components = normalizeComponents(data.components);
+  msg.edited = new Date();
+  await msg.save();
+  const author = await User.findById(botId)
+    .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+    .lean();
+  const payload = messageToJson(msg, { [botId]: author });
+  await broadcastToChannel(channelId, { type: 'MESSAGE_UPDATE', d: payload }, {
+    eventIntent: GatewayIntents.GUILD_MESSAGES,
+  });
+  return { message: msg, payload };
+}
+
+async function applyInteractionCallback({ interaction, ch, bot, callback }) {
+  if (!callback || typeof callback !== 'object') {
+    return { ok: false, error: 'Invalid callback payload' };
+  }
+  const type = Number(callback.type);
+  const data = callback.data && typeof callback.data === 'object' ? callback.data : {};
+
+  if (![4, 5, 6, 7, 9].includes(type)) {
+    return { ok: false, error: 'Unsupported callback type' };
+  }
+
+  interaction.acknowledged = true;
+
+  if (type === 5) {
+    interaction.deferred = true;
+    interaction.deferred_ephemeral = isEphemeralFlags(data.flags);
+    await interaction.save();
+    return { ok: true, deferred: true };
+  }
+
+  if (type === 6) {
+    await interaction.save();
+    return { ok: true, deferred: true };
+  }
+
+  if (type === 9) {
+    const modal = normalizeModalPayload(data);
+    if (!modal) return { ok: false, error: 'Invalid modal payload' };
+    interaction.pending_modal = modal;
+    await interaction.save();
+    return { ok: true, modal };
+  }
+
+  if (type === 7) {
+    const targetId = interaction.message_id || interaction.original_response_message_id;
+    if (!targetId) return { ok: false, error: 'No message to update for type 7' };
+    const updated = await updateBotMessageInChannel(ch, bot._id, targetId, data);
+    if (!updated) return { ok: false, error: 'Target message not found' };
+    await interaction.save();
+    return { ok: true, updated_message_id: targetId };
+  }
+
+  if (type === 4) {
+    if (isEphemeralFlags(data.flags)) {
+      const ephemeral = await sendInteractionEphemeral(interaction.user, interaction.channel, bot._id, data);
+      await interaction.save();
+      return { ok: true, ephemeral };
+    }
+    const created = await createBotMessageInChannel(ch, bot._id, data);
+    interaction.original_response_message_id = created.message._id;
+    await interaction.save();
+    return { ok: true, message: created.payload };
+  }
+
+  return { ok: false, error: 'Unhandled callback type' };
+}
+
+async function resolveContextBotCommand(serverId, commandName, commandType) {
+  if (!serverId) return { error: 'Context commands are server-only' };
+  const name = String(commandName || '').trim().toLowerCase();
+  if (!name) return { error: 'Command name required' };
+  const kind = String(commandType || 'MESSAGE').toUpperCase();
+  const members = await Member.find({ server: serverId }).lean();
+  const userIds = members.map((m) => m.user);
+  const bots = await Bot.find({ _id: { $in: userIds } }).lean();
+  const matches = [];
+  for (const b of bots) {
+    const command = (b.slash_commands || []).find((c) => String(c.name || '').toLowerCase() === name && String(c.type || 'CHAT_INPUT') === kind);
+    if (command) matches.push({ bot: b, command });
+  }
+  if (matches.length === 0) return { error: `No bot ${kind.toLowerCase()} context command named "${name}" found` };
+  if (matches.length > 1) return { error: `Multiple bots define "${name}" ${kind.toLowerCase()} context command` };
+  return matches[0];
 }
 
 // POST /channels/create - Create group
@@ -170,15 +472,22 @@ router.get('/:target/commands', authMiddleware(), async (req, res) => {
       .lean();
     const byUser = Object.fromEntries(users.map((u) => [u._id, u]));
     for (const b of botDocs) {
-      const cmds = (b.slash_commands || []).filter((c) => c.name);
-      if (cmds.length === 0) continue;
+      const allCmds = (b.slash_commands || []).filter((c) => c.name);
+      if (allCmds.length === 0) continue;
+      const chatInput = allCmds.filter((c) => String(c.type || 'CHAT_INPUT') === 'CHAT_INPUT');
+      const messageContext = allCmds.filter((c) => String(c.type || 'CHAT_INPUT') === 'MESSAGE');
+      const userContext = allCmds.filter((c) => String(c.type || 'CHAT_INPUT') === 'USER');
       const u = byUser[b._id];
       bots.push({
         bot_id: b._id,
         username: u?.username ?? b._id,
         display_name: u?.display_name || null,
         discriminator: u?.discriminator ?? null,
-        commands: cmds.map((c) => ({ name: c.name, description: c.description || '' })),
+        commands: chatInput.map((c) => ({ name: c.name, description: c.description || '' })),
+        context_commands: {
+          message: messageContext.map((c) => ({ name: c.name, description: c.description || '' })),
+          user: userContext.map((c) => ({ name: c.name, description: c.description || '' })),
+        },
       });
     }
   }
@@ -335,6 +644,66 @@ router.get('/:target/messages/:msg', authMiddleware(), async (req, res) => {
   res.json(messageToJson(msg, { [msg.author]: author }));
 });
 
+// GET /channels/:target/messages/:msg/translate?lang=es
+router.get('/:target/messages/:msg/translate', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+
+  const msg = await Message.findOne({ _id: req.params.msg, channel: ch._id });
+  if (!msg) return res.status(404).json({ type: 'NotFound', error: 'Message not found' });
+
+  const lang = String(req.query.lang || req.query.target || 'en')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z-]/g, '')
+    .split('-')[0]
+    .slice(0, 8) || 'en';
+
+  const existing = (msg.translations && typeof msg.translations === 'object') ? msg.translations[lang] : null;
+  if (existing?.translated_content) {
+    return res.json({
+      message_id: msg._id,
+      channel_id: ch._id,
+      source_language: existing.source_language || 'unknown',
+      target_language: lang,
+      translated_content: existing.translated_content,
+      provider: existing.provider || 'cache',
+      cached: true,
+    });
+  }
+
+  const result = await translateMessageContent({
+    text: msg.content || '',
+    targetLanguage: lang,
+    sourceLanguage: 'auto',
+  });
+
+  const nextTranslations = (msg.translations && typeof msg.translations === 'object')
+    ? { ...msg.translations }
+    : {};
+  nextTranslations[lang] = {
+    translated_content: result.translated_text,
+    source_language: result.source_language,
+    provider: result.provider,
+    translated_at: new Date().toISOString(),
+  };
+  msg.translations = nextTranslations;
+  msg.markModified('translations');
+  await msg.save();
+
+  res.json({
+    message_id: msg._id,
+    channel_id: ch._id,
+    source_language: result.source_language,
+    target_language: result.target_language,
+    translated_content: result.translated_text,
+    provider: result.provider,
+    cached: false,
+  });
+});
+
 // POST /channels/:target/messages
 router.post('/:target/messages', authMiddleware(), async (req, res) => {
   const ch = await Channel.findById(req.params.target);
@@ -380,27 +749,44 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
     }
   }
   const content = req.body?.content ?? '';
-  // Word filter enforcement
-  if (ch.server && content) {
-    const server = await Server.findById(ch.server).select('word_filter').lean();
-    if (server?.word_filter?.length > 0) {
-      const lower = content.toLowerCase();
-      const blocked = server.word_filter.find((w) => lower.includes(w.toLowerCase()));
-      if (blocked) {
-        return res.status(403).json({ type: 'Blocked', error: 'Message contains a blocked word' });
-      }
-    }
-  }
   // Normalize replies: accept both string[] and {id, mention}[]
   const rawReplies = req.body?.replies || [];
   const replyIds = rawReplies.map((r) => (typeof r === 'object' ? r.id : r)).filter(Boolean);
   const contentStr = String(content).slice(0, 2000);
+
+  // Word filter + automod enforcement
+  if (ch.server && contentStr) {
+    const server = await Server.findById(ch.server).select('word_filter automod').lean();
+    const blockedWords = Array.isArray(server?.automod?.blocked_words) && server?.automod?.blocked_words.length > 0
+      ? server.automod.blocked_words
+      : (server?.word_filter || []);
+    if (blockedWords.length > 0) {
+      const lower = contentStr.toLowerCase();
+      const blocked = blockedWords.find((w) => lower.includes(String(w).toLowerCase()));
+      if (blocked) {
+        return res.status(403).json({ type: 'Blocked', error: 'Message contains a blocked word' });
+      }
+    }
+    const automodEnabled = !!server?.automod?.enabled;
+    if (automodEnabled) {
+      if (server?.automod?.block_invites && hasInviteLink(contentStr)) {
+        return res.status(403).json({ type: 'Blocked', error: 'Invite links are blocked by automod' });
+      }
+      const maxMentions = Math.max(0, Number(server?.automod?.max_mentions || 0));
+      if (maxMentions > 0 && mentionCountFromContent(contentStr) > maxMentions) {
+        return res.status(403).json({ type: 'Blocked', error: `Automod limit: max ${maxMentions} mentions` });
+      }
+    }
+  }
+
   const attachments = req.body?.attachments || [];
   const embedsIn = req.body?.embeds || [];
+  const componentsIn = normalizeComponents(req.body?.components || []);
   const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
   const hasEmbedIn = Array.isArray(embedsIn) && embedsIn.length > 0;
+  const hasComponentsIn = Array.isArray(componentsIn) && componentsIn.length > 0;
   const parsedSlash = parseSlashContent(contentStr);
-  const slashOnly = parsedSlash && !hasAttachments && !hasEmbedIn && !req.body?.masquerade;
+  const slashOnly = parsedSlash && !hasAttachments && !hasEmbedIn && !hasComponentsIn && !req.body?.masquerade;
 
   if (slashOnly && parsedSlash.name === 'whiteboard') {
     const clawId = getOfficialClawUserId();
@@ -625,45 +1011,60 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
       }
       if (botMatches.length === 1) {
         const bot = botMatches[0];
+        const msgId = ulid();
+        const msg = await Message.create({
+          _id: msgId,
+          channel: ch._id,
+          author: req.userId,
+          content: contentStr,
+          attachments: [],
+          embeds: [],
+          mentions: req.body?.mentions || [],
+          replies: replyIds,
+          masquerade: req.body?.masquerade || undefined,
+          nonce: req.body?.nonce,
+        });
+        ch.last_message_id = msgId;
+        await ch.save();
+
+        const author = await User.findById(req.userId)
+          .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
+          .lean();
+        const authorMap = { [req.userId]: author };
+        const replyContext = await fetchReplyContext(replyIds, authorMap);
+        const payload = messageToJson(msg, authorMap, replyContext);
+
+        const interactionId = ulid();
+        const interactionToken = crypto.randomBytes(24).toString('hex');
+        const interactionPayload = {
+          version: 1,
+          type: 'application_command',
+          id: interactionId,
+          token: interactionToken,
+          channel_id: ch._id,
+          guild_id: ch.server,
+          user: { id: req.userId, username: author?.username },
+          command: { name: parsedSlash.name, args: parsedSlash.args },
+          message_id: msgId,
+        };
+        const interaction = await Interaction.create({
+          _id: interactionId,
+          token: interactionToken,
+          bot: bot._id,
+          user: req.userId,
+          channel: ch._id,
+          server: ch.server || null,
+          kind: 'application_command',
+          command: { name: parsedSlash.name, args: parsedSlash.args },
+          message_id: msgId,
+        });
+
+        // Gateway-connected bots receive interactions regardless of interactions_url.
+        broadcastToUser(bot._id, { type: 'INTERACTION_CREATE', d: interactionPayload });
+
         const url = String(bot.interactions_url || '').trim();
         if (url) {
-          const msgId = ulid();
-          const msg = await Message.create({
-            _id: msgId,
-            channel: ch._id,
-            author: req.userId,
-            content: contentStr,
-            attachments: [],
-            embeds: [],
-            mentions: req.body?.mentions || [],
-            replies: replyIds,
-            masquerade: req.body?.masquerade || undefined,
-            nonce: req.body?.nonce,
-          });
-          ch.last_message_id = msgId;
-          await ch.save();
-
-          const author = await User.findById(req.userId)
-            .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
-            .lean();
-          const authorMap = { [req.userId]: author };
-          const replyContext = await fetchReplyContext(replyIds, authorMap);
-          const payload = messageToJson(msg, authorMap, replyContext);
-
-          const interactionId = ulid();
-          const interactionToken = crypto.randomBytes(24).toString('hex');
-          const interactionPayload = {
-            version: 1,
-            type: 'application_command',
-            id: interactionId,
-            token: interactionToken,
-            channel_id: ch._id,
-            guild_id: ch.server,
-            user: { id: req.userId, username: author?.username },
-            command: { name: parsedSlash.name, args: parsedSlash.args },
-            message_id: msgId,
-          };
-          const botHttp = await postSlashInteraction(url, bot.token, interactionPayload);
+          const botHttp = await postBotInteraction(url, bot.token, interactionPayload);
           if (!botHttp.ok) {
             void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
               eventIntent: GatewayIntents.GUILD_MESSAGES,
@@ -675,46 +1076,52 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
               user_message: payload,
             });
           }
-
-          const botMsgId = ulid();
-          const botMsg = await Message.create({
-            _id: botMsgId,
-            channel: ch._id,
-            author: bot._id,
-            content: botHttp.data.content,
-            embeds: botHttp.data.embeds || [],
-            mentions: [],
-            replies: [],
+          const applied = await applyInteractionCallback({
+            interaction,
+            ch,
+            bot,
+            callback: { type: botHttp.type, data: botHttp.data || {} },
           });
-          ch.last_message_id = botMsgId;
-          await ch.save();
-
-          res.status(201).json(payload);
-          void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
-            eventIntent: GatewayIntents.GUILD_MESSAGES,
-          }).catch(() => {});
-          notifyPushForNewMessage(ch, req.userId, payload);
-
-          const botAuthor = await User.findById(bot._id)
-            .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
-            .lean();
-          const botMsgPayload = messageToJson(botMsg, { [bot._id]: botAuthor }, null);
-          void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: botMsgPayload }, {
-            eventIntent: GatewayIntents.GUILD_MESSAGES,
-          }).catch(() => {});
-          notifyPushForNewMessage(ch, bot._id, botMsgPayload);
-
-          if (contentStr && /https?:\/\//i.test(contentStr)) {
-            fetchLinkPreviewsForContent(contentStr, 2)
-              .then((linkPreviews) => {
-                if (linkPreviews.length > 0) {
-                  return Message.updateOne({ _id: msgId }, { $set: { link_previews: linkPreviews } });
-                }
-              })
-              .catch(() => {});
+          if (!applied.ok) {
+            void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
+              eventIntent: GatewayIntents.GUILD_MESSAGES,
+            }).catch(() => {});
+            notifyPushForNewMessage(ch, req.userId, payload);
+            return res.status(502).json({
+              type: 'FailedDependency',
+              error: applied.error || 'Invalid interaction callback',
+              user_message: payload,
+            });
           }
-          return;
+          if (applied.modal) {
+            broadcastToUser(req.userId, {
+              type: 'INTERACTION_MODAL_CREATE',
+              d: {
+                channel_id: ch._id,
+                interaction_id: interaction._id,
+                interaction_token: interaction.token,
+                modal: applied.modal,
+              },
+            });
+          }
         }
+
+        res.status(201).json(payload);
+        void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
+          eventIntent: GatewayIntents.GUILD_MESSAGES,
+        }).catch(() => {});
+        notifyPushForNewMessage(ch, req.userId, payload);
+
+        if (contentStr && /https?:\/\//i.test(contentStr)) {
+          fetchLinkPreviewsForContent(contentStr, 2)
+            .then((linkPreviews) => {
+              if (linkPreviews.length > 0) {
+                return Message.updateOne({ _id: msgId }, { $set: { link_previews: linkPreviews } });
+              }
+            })
+            .catch(() => {});
+        }
+        return;
       }
     }
   }
@@ -727,6 +1134,7 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
     content: contentStr,
     attachments,
     embeds: embedsIn,
+    components: componentsIn,
     mentions: req.body?.mentions || [],
     replies: replyIds,
     masquerade: req.body?.masquerade || undefined,
@@ -840,6 +1248,374 @@ router.patch('/:target/messages/:msg', authMiddleware(), async (req, res) => {
     eventIntent: GatewayIntents.GUILD_MESSAGES,
   });
   res.json(payload);
+});
+
+// POST /channels/:target/messages/:msg/components/:customId
+// Dispatch a component interaction (button/select) for bot-authored messages.
+router.post('/:target/messages/:msg/components/:customId', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+
+  const msg = await Message.findOne({ _id: req.params.msg, channel: ch._id });
+  if (!msg) return res.status(404).json({ type: 'NotFound', error: 'Message not found' });
+
+  const customId = String(req.params.customId || '').slice(0, 100);
+  if (!customId) return res.status(400).json({ type: 'InvalidPayload', error: 'custom_id required' });
+
+  const clickedComponent = findComponentByCustomId(msg.components || [], customId);
+  if (!clickedComponent) {
+    return res.status(404).json({ type: 'NotFound', error: 'Component not found on message' });
+  }
+  if (clickedComponent.disabled) {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Component is disabled' });
+  }
+  if (clickedComponent.type === 'button' && clickedComponent.style === 'link') {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Link buttons are not interactive' });
+  }
+  const values = Array.isArray(req.body?.values) ? req.body.values.map((v) => String(v).slice(0, 100)) : [];
+
+  const botUser = await User.findById(msg.author).select('_id username bot').lean();
+  if (!botUser?.bot?.owner) {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Message author is not a bot' });
+  }
+  const bot = await Bot.findById(botUser._id).lean();
+  if (!bot) {
+    return res.status(404).json({ type: 'NotFound', error: 'Bot not found' });
+  }
+
+  const clickUser = await User.findById(req.userId).select('_id username display_name discriminator').lean();
+  const interactionId = ulid();
+  const interactionToken = crypto.randomBytes(24).toString('hex');
+  const interactionPayload = {
+    version: 1,
+    type: 'message_component',
+    id: interactionId,
+    token: interactionToken,
+    channel_id: ch._id,
+    guild_id: ch.server || null,
+    user: {
+      id: req.userId,
+      username: clickUser?.username || null,
+      display_name: clickUser?.display_name || null,
+      discriminator: clickUser?.discriminator || null,
+    },
+    message: {
+      id: msg._id,
+      channel_id: msg.channel,
+      content: msg.content || '',
+      embeds: msg.embeds || [],
+      components: msg.components || [],
+    },
+    message_id: msg._id,
+    component: {
+      type: clickedComponent.type || 'button',
+      custom_id: customId,
+      label: clickedComponent.label || null,
+      style: clickedComponent.style || null,
+      values,
+    },
+  };
+  const interaction = await Interaction.create({
+    _id: interactionId,
+    token: interactionToken,
+    bot: bot._id,
+    user: req.userId,
+    channel: ch._id,
+    server: ch.server || null,
+    kind: 'message_component',
+    component: interactionPayload.component,
+    values,
+    message_id: msg._id,
+  });
+
+  // SDK-connected bots can consume interactions directly over gateway.
+  broadcastToUser(bot._id, { type: 'INTERACTION_CREATE', d: interactionPayload });
+
+  // Also support webhook interaction handlers when interactions_url is configured.
+  let modalForClient = null;
+  const interactionsUrl = String(bot.interactions_url || '').trim();
+  if (interactionsUrl) {
+    const botHttp = await postBotInteraction(interactionsUrl, bot.token, interactionPayload);
+    if (botHttp.ok) {
+      const applied = await applyInteractionCallback({
+        interaction,
+        ch,
+        bot,
+        callback: { type: botHttp.type, data: botHttp.data || {} },
+      });
+      if (applied.ok && applied.modal) {
+        modalForClient = {
+          interaction_id: interaction._id,
+          interaction_token: interaction.token,
+          modal: applied.modal,
+        };
+      }
+    }
+  }
+
+  res.status(202).json({ accepted: true, modal: modalForClient });
+});
+
+// POST /channels/:target/interactions/:id/:token/modal-submit
+router.post('/:target/interactions/:id/:token/modal-submit', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+
+  const interaction = await Interaction.findOne({
+    _id: req.params.id,
+    token: req.params.token,
+    user: req.userId,
+    channel: ch._id,
+  });
+  if (!interaction) return res.status(404).json({ type: 'NotFound', error: 'Interaction not found' });
+  if (!interaction.pending_modal) return res.status(400).json({ type: 'InvalidOperation', error: 'No pending modal for interaction' });
+
+  const submittedCustomId = String(req.body?.custom_id || '').slice(0, 100);
+  const modalCustomId = String(interaction.pending_modal?.custom_id || '');
+  if (!submittedCustomId || submittedCustomId !== modalCustomId) {
+    return res.status(400).json({ type: 'InvalidPayload', error: 'Modal custom_id mismatch' });
+  }
+
+  const valuesIn = Array.isArray(req.body?.values) ? req.body.values : [];
+  const values = valuesIn
+    .map((row) => ({
+      custom_id: String(row?.custom_id || '').slice(0, 100),
+      value: String(row?.value || '').slice(0, 4000),
+    }))
+    .filter((row) => row.custom_id);
+
+  const bot = await Bot.findById(interaction.bot).lean();
+  if (!bot) return res.status(404).json({ type: 'NotFound', error: 'Bot not found' });
+  const clickUser = await User.findById(req.userId).select('_id username display_name discriminator').lean();
+  const modalInteractionId = ulid();
+  const modalInteractionToken = crypto.randomBytes(24).toString('hex');
+  const payload = {
+    version: 1,
+    type: 'modal_submit',
+    id: modalInteractionId,
+    token: modalInteractionToken,
+    channel_id: ch._id,
+    guild_id: ch.server || null,
+    user: {
+      id: req.userId,
+      username: clickUser?.username || null,
+      display_name: clickUser?.display_name || null,
+      discriminator: clickUser?.discriminator || null,
+    },
+    message_id: interaction.message_id || null,
+    modal: {
+      custom_id: submittedCustomId,
+      values,
+    },
+    parent_interaction_id: interaction._id,
+  };
+
+  const modalInteraction = await Interaction.create({
+    _id: modalInteractionId,
+    token: modalInteractionToken,
+    bot: interaction.bot,
+    user: req.userId,
+    channel: ch._id,
+    server: ch.server || null,
+    kind: 'modal_submit',
+    values: values.map((v) => `${v.custom_id}:${v.value}`.slice(0, 4200)),
+    message_id: interaction.message_id || null,
+    parent_interaction_id: interaction._id,
+  });
+
+  interaction.pending_modal = null;
+  interaction.markModified('pending_modal');
+  await interaction.save();
+
+  broadcastToUser(bot._id, { type: 'INTERACTION_CREATE', d: payload });
+
+  const interactionsUrl = String(bot.interactions_url || '').trim();
+  if (interactionsUrl) {
+    const botHttp = await postBotInteraction(interactionsUrl, bot.token, payload);
+    if (botHttp.ok) {
+      const applied = await applyInteractionCallback({
+        interaction: modalInteraction,
+        ch,
+        bot,
+        callback: { type: botHttp.type, data: botHttp.data || {} },
+      });
+      if (applied.ok && applied.modal) {
+        broadcastToUser(req.userId, {
+          type: 'INTERACTION_MODAL_CREATE',
+          d: {
+            channel_id: ch._id,
+            interaction_id: modalInteraction._id,
+            interaction_token: modalInteraction.token,
+            modal: applied.modal,
+          },
+        });
+      }
+    }
+  }
+
+  res.status(202).json({ accepted: true });
+});
+
+// POST /channels/:target/messages/:msg/context/:command
+router.post('/:target/messages/:msg/context/:command', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+  if (!ch.server) return res.status(400).json({ type: 'InvalidOperation', error: 'Context commands require a server channel' });
+
+  const targetMsg = await Message.findOne({ _id: req.params.msg, channel: ch._id }).lean();
+  if (!targetMsg) return res.status(404).json({ type: 'NotFound', error: 'Message not found' });
+
+  const resolved = await resolveContextBotCommand(ch.server, req.params.command, 'MESSAGE');
+  if (resolved.error) return res.status(400).json({ type: 'InvalidOperation', error: resolved.error });
+  const { bot, command } = resolved;
+
+  const interactionId = ulid();
+  const interactionToken = crypto.randomBytes(24).toString('hex');
+  const actor = await User.findById(req.userId).select('_id username display_name discriminator').lean();
+  const payload = {
+    version: 1,
+    type: 'application_command',
+    id: interactionId,
+    token: interactionToken,
+    channel_id: ch._id,
+    guild_id: ch.server,
+    user: {
+      id: req.userId,
+      username: actor?.username || null,
+      display_name: actor?.display_name || null,
+      discriminator: actor?.discriminator || null,
+    },
+    command: {
+      type: 'MESSAGE',
+      name: command.name,
+      target_message_id: targetMsg._id,
+      target_author_id: targetMsg.author,
+    },
+    message_id: targetMsg._id,
+  };
+  const interaction = await Interaction.create({
+    _id: interactionId,
+    token: interactionToken,
+    bot: bot._id,
+    user: req.userId,
+    channel: ch._id,
+    server: ch.server,
+    kind: 'context_message',
+    command: payload.command,
+    message_id: targetMsg._id,
+  });
+
+  broadcastToUser(bot._id, { type: 'INTERACTION_CREATE', d: payload });
+
+  let modal = null;
+  const url = String(bot.interactions_url || '').trim();
+  if (url) {
+    const botHttp = await postBotInteraction(url, bot.token, payload);
+    if (botHttp.ok) {
+      const applied = await applyInteractionCallback({
+        interaction,
+        ch,
+        bot,
+        callback: { type: botHttp.type, data: botHttp.data || {} },
+      });
+      if (applied.ok && applied.modal) {
+        modal = {
+          interaction_id: interaction._id,
+          interaction_token: interaction.token,
+          modal: applied.modal,
+        };
+      }
+    }
+  }
+
+  res.status(202).json({ accepted: true, modal });
+});
+
+// POST /channels/:target/users/:user/context/:command
+router.post('/:target/users/:user/context/:command', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+  if (!ch.server) return res.status(400).json({ type: 'InvalidOperation', error: 'Context commands require a server channel' });
+
+  const targetUser = await User.findById(req.params.user).select('_id username display_name discriminator').lean();
+  if (!targetUser) return res.status(404).json({ type: 'NotFound', error: 'User not found' });
+
+  const resolved = await resolveContextBotCommand(ch.server, req.params.command, 'USER');
+  if (resolved.error) return res.status(400).json({ type: 'InvalidOperation', error: resolved.error });
+  const { bot, command } = resolved;
+
+  const interactionId = ulid();
+  const interactionToken = crypto.randomBytes(24).toString('hex');
+  const actor = await User.findById(req.userId).select('_id username display_name discriminator').lean();
+  const payload = {
+    version: 1,
+    type: 'application_command',
+    id: interactionId,
+    token: interactionToken,
+    channel_id: ch._id,
+    guild_id: ch.server,
+    user: {
+      id: req.userId,
+      username: actor?.username || null,
+      display_name: actor?.display_name || null,
+      discriminator: actor?.discriminator || null,
+    },
+    command: {
+      type: 'USER',
+      name: command.name,
+      target_user: {
+        id: targetUser._id,
+        username: targetUser.username,
+        display_name: targetUser.display_name || null,
+        discriminator: targetUser.discriminator || null,
+      },
+    },
+    message_id: null,
+  };
+  const interaction = await Interaction.create({
+    _id: interactionId,
+    token: interactionToken,
+    bot: bot._id,
+    user: req.userId,
+    channel: ch._id,
+    server: ch.server,
+    kind: 'context_user',
+    command: payload.command,
+    message_id: null,
+  });
+
+  broadcastToUser(bot._id, { type: 'INTERACTION_CREATE', d: payload });
+
+  let modal = null;
+  const url = String(bot.interactions_url || '').trim();
+  if (url) {
+    const botHttp = await postBotInteraction(url, bot.token, payload);
+    if (botHttp.ok) {
+      const applied = await applyInteractionCallback({
+        interaction,
+        ch,
+        bot,
+        callback: { type: botHttp.type, data: botHttp.data || {} },
+      });
+      if (applied.ok && applied.modal) {
+        modal = {
+          interaction_id: interaction._id,
+          interaction_token: interaction.token,
+          modal: applied.modal,
+        };
+      }
+    }
+  }
+
+  res.status(202).json({ accepted: true, modal });
 });
 
 // DELETE /channels/:target/messages/:msg

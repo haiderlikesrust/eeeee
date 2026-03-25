@@ -38,4 +38,11 @@ export default {
   vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',
   vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || '',
   vapidSubject: process.env.VAPID_SUBJECT || '',
+
+  /**
+   * Optional translation provider (LibreTranslate-compatible endpoint).
+   * Example: https://translate.argosopentech.com/translate
+   */
+  translateProviderUrl: process.env.TRANSLATE_PROVIDER_URL || '',
+  translateProviderApiKey: process.env.TRANSLATE_PROVIDER_API_KEY || '',
 };

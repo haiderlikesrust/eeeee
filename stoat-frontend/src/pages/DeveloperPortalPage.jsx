@@ -472,6 +472,7 @@ export default function DeveloperPortalPage() {
             <p>Create bots, configure intents, use the rich presence API for your account, install into servers, and test with the SDK.</p>
             <p style={{ marginTop: 6 }}>
               <Link to="/developer/editor" className="dev-link-btn" style={{ marginRight: 8 }}>No-Code Bot Builder</Link>
+              <Link to="/bots" className="dev-link-btn">Bot Marketplace</Link>
             </p>
           </div>
           <Link to="/channels/@me" className="dev-link-btn">Back to App</Link>

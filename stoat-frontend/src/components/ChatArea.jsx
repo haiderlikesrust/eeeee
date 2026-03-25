@@ -31,8 +31,8 @@ import { SLASH_BUILTIN_FALLBACK } from '../utils/slashBuiltins';
 import './VoiceMessages.css';
 import './ChatArea.css';
 
-/** Same tokenization as renderMessageContent (URLs, mentions, emoji). */
-const MESSAGE_PART_SPLIT = /(<:[a-zA-Z0-9_]+:[a-zA-Z0-9]+>|:[a-zA-Z0-9_]+:|<@&[a-zA-Z0-9]+>|<@[a-zA-Z0-9]+>|@everyone|@[a-zA-Z0-9_. -]+(?=[^a-zA-Z0-9_. -]|$)|https?:\/\/\S+)/g;
+/** Same tokenization as renderMessageContent (URLs, mentions, emoji, channels). */
+const MESSAGE_PART_SPLIT = /(<:[a-zA-Z0-9_]+:[a-zA-Z0-9]+>|:[a-zA-Z0-9_]+:|<@&[a-zA-Z0-9]+>|<@[a-zA-Z0-9]+>|<#[a-zA-Z0-9]+>|@everyone|@[a-zA-Z0-9_. -]+(?=[^a-zA-Z0-9_. -]|$)|#[a-zA-Z0-9_-]+(?=[^a-zA-Z0-9_-]|$)|https?:\/\/\S+)/g;
 
 /** Sort key for message ordering (oldest → newest in list). */
 function messageSortTime(m) {
@@ -142,6 +142,64 @@ function renderMessageEmbeds(embeds, { onJoinWhiteboard } = {}) {
   );
 }
 
+function normalizeMessageComponentRows(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const rows = [];
+  const styleMap = { 1: 'primary', 2: 'secondary', 3: 'success', 4: 'danger', 5: 'link' };
+  const normalizeStyle = (style) => {
+    if (Number.isFinite(Number(style)) && styleMap[Number(style)]) return styleMap[Number(style)];
+    const s = String(style || '').toLowerCase();
+    if (['primary', 'secondary', 'success', 'danger', 'link'].includes(s)) return s;
+    return 'secondary';
+  };
+  const toComponent = (c) => {
+    if (!c || typeof c !== 'object') return null;
+    const typeRaw = String(c.type || '').toLowerCase();
+    const isSelect = typeRaw === 'select'
+      || typeRaw === 'string_select'
+      || typeRaw === 'select_menu'
+      || Number(c.type) === 3
+      || Array.isArray(c.options);
+    if (isSelect) {
+      const customId = c.custom_id || c.customId || null;
+      const options = Array.isArray(c.options) ? c.options : [];
+      if (!customId || options.length === 0) return null;
+      return {
+        type: 'select',
+        custom_id: customId,
+        placeholder: c.placeholder || '',
+        min_values: Number(c.min_values ?? c.minValues ?? 1) || 1,
+        max_values: Number(c.max_values ?? c.maxValues ?? 1) || 1,
+        disabled: !!c.disabled,
+        options: options.map((opt) => ({
+          label: String(opt?.label || ''),
+          value: String(opt?.value || ''),
+          description: opt?.description ? String(opt.description) : '',
+        })).filter((opt) => opt.label && opt.value),
+      };
+    }
+    const style = normalizeStyle(c.style);
+    const out = {
+      type: 'button',
+      style,
+      label: String(c.label || ''),
+      disabled: !!c.disabled,
+      custom_id: c.custom_id || c.customId || null,
+      url: c.url || null,
+    };
+    if (style !== 'link' && !out.custom_id) return null;
+    if (style === 'link' && !out.url) return null;
+    return out;
+  };
+
+  for (const rowLike of raw.slice(0, 5)) {
+    const rowComponents = Array.isArray(rowLike?.components) ? rowLike.components : (rowLike ? [rowLike] : []);
+    const components = rowComponents.map(toComponent).filter(Boolean).slice(0, 5);
+    if (components.length > 0) rows.push(components);
+  }
+  return rows;
+}
+
 function isDirectMediaUrl(url) {
   if (!url) return false;
   return /\.(gif|png|jpg|jpeg|webp)(\?.*)?$/i.test(url)
@@ -227,7 +285,7 @@ function renderMarkdownInline(text) {
 }
 
 
-function renderMessageContent(content, customEmojiMap, user, mentionDirectory, onMentionClick, roleDirectory, setLightboxSrc, linkPreviews) {
+function renderMessageContent(content, customEmojiMap, user, mentionDirectory, onMentionClick, roleDirectory, channelDirectory, setLightboxSrc, linkPreviews) {
   if (!content) return null;
   const jumbo = isEmojiOnly(content);
   const cls = jumbo ? 'emoji-jumbo' : '';
@@ -268,6 +326,11 @@ function renderMessageContent(content, customEmojiMap, user, mentionDirectory, o
       if (!role) return <span key={i}>{part}</span>;
       const style = role.colour ? { color: role.colour, backgroundColor: `${role.colour}20` } : {};
       return <span key={i} className="msg-mention role-mention" style={style}>@{role.name}</span>;
+    }
+    const channelIdMention = part.match(/^<#([a-zA-Z0-9]+)>$/);
+    if (channelIdMention) {
+      const ch = channelDirectory?.byId?.[channelIdMention[1]];
+      return <span key={i} className="msg-mention channel-mention">#{ch?.name || channelIdMention[1]}</span>;
     }
     const idMention = part.match(/^<@([a-zA-Z0-9]+)>$/);
     if (idMention) {
@@ -319,6 +382,13 @@ function renderMessageContent(content, customEmojiMap, user, mentionDirectory, o
         </button>
       );
     }
+    const channelNameMatch = part.match(/^#([a-zA-Z0-9_-]+)$/);
+    if (channelNameMatch) {
+      const key = channelNameMatch[1].toLowerCase();
+      const known = channelDirectory?.byName?.[key];
+      if (!known) return <span key={i}>{part}</span>;
+      return <span key={i} className="msg-mention channel-mention">#{known.name}</span>;
+    }
     return <span key={i}>{renderMarkdownInline(part)}</span>;
   });
   return elements;
@@ -362,6 +432,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   const [perms, setPerms] = useState(0);
   const [customEmojis, setCustomEmojis] = useState({});
   const [mentionDirectory, setMentionDirectory] = useState({ byName: {}, byId: {} });
+  const [channelDirectory, setChannelDirectory] = useState({ byId: {}, byName: {}, items: [] });
   const [roleDirectory, setRoleDirectory] = useState({ byName: {}, byId: {} });
   const [mentionCard, setMentionCard] = useState(null);
   const [autocomplete, setAutocomplete] = useState(null);
@@ -370,11 +441,16 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   const [replyingTo, setReplyingTo] = useState(null);
   const [slowmodeCooldown, setSlowmodeCooldown] = useState(0);
   const [lightboxSrc, setLightboxSrc] = useState(null);
-  /** GET /channels/:id/commands — built-in + bot slash commands for autocomplete */
+  /** GET /channels/:id/commands — built-in + bot slash + context commands */
   const [slashCommandsData, setSlashCommandsData] = useState({ builtin: [], bots: [] });
   const [openThread, setOpenThread] = useState(null);
   const [whiteboardOpen, setWhiteboardOpen] = useState(null);
   const [whiteboardBanner, setWhiteboardBanner] = useState(null);
+  const [translatedByMsg, setTranslatedByMsg] = useState({});
+  const [translateLoadingId, setTranslateLoadingId] = useState(null);
+  const [componentPending, setComponentPending] = useState({});
+  const [contextCommandPending, setContextCommandPending] = useState(null);
+  const [interactionModal, setInteractionModal] = useState(null);
   const bottomRef = useRef(null);
   const pollRef = useRef(null);
   /** Ignore HTTP results if user switched channel before the request finished. */
@@ -452,10 +528,11 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       if (!skipPerms) {
         if (ch.server) {
           try {
-            const [p, emojis, members] = await Promise.all([
+            const [p, emojis, members, serverData] = await Promise.all([
               get(`/channels/${cid}/permissions`).catch(() => ({})),
               get(`/servers/${ch.server}/emojis`).catch(() => []),
               get(`/servers/${ch.server}/members`).catch(() => []),
+              get(`/servers/${ch.server}`).catch(() => null),
             ]);
             if (channelIdRef.current !== cid) return;
             {
@@ -480,15 +557,45 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               for (const k of keys) byName[k] = m;
             }
             setMentionDirectory({ byName, byId });
+            const byChannelId = {};
+            const byChannelName = {};
+            const channelItems = [];
+            for (const c of (serverData?.channels || [])) {
+              if (!c || typeof c !== 'object' || !c._id) continue;
+              const channelName = String(c.name || '').trim();
+              if (!channelName) continue;
+              const row = {
+                _id: c._id,
+                name: channelName,
+                channel_type: c.channel_type || 'TextChannel',
+              };
+              byChannelId[row._id] = row;
+              byChannelName[row.name.toLowerCase()] = row;
+              channelItems.push(row);
+            }
+            channelItems.sort((a, b) => {
+              const typeScore = (type) => {
+                if (type === 'TextChannel') return 0;
+                if (type === 'VoiceChannel') return 1;
+                if (type === 'Thread') return 2;
+                return 3;
+              };
+              const scoreDiff = typeScore(a.channel_type) - typeScore(b.channel_type);
+              if (scoreDiff !== 0) return scoreDiff;
+              return a.name.localeCompare(b.name);
+            });
+            setChannelDirectory({ byId: byChannelId, byName: byChannelName, items: channelItems });
           } catch {
             if (channelIdRef.current !== cid) return;
             setPerms(0);
             setMentionDirectory({ byName: {}, byId: {} });
+            setChannelDirectory({ byId: {}, byName: {}, items: [] });
           }
         } else {
           if (channelIdRef.current !== cid) return;
           setPerms(ALL_PERMISSIONS);
           setMentionDirectory({ byName: {}, byId: {} });
+          setChannelDirectory({ byId: {}, byName: {}, items: [] });
         }
         if (channelIdRef.current !== cid) return;
         setLoading(false);
@@ -517,6 +624,10 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     setWhiteboardBanner(null);
     setShowSearch(false);
     setShowPinned(false);
+    setTranslatedByMsg({});
+    setTranslateLoadingId(null);
+    setContextCommandPending(null);
+    setInteractionModal(null);
     setAutocomplete(null);
     setMentionCard(null);
     fetchMessagesRef.current();
@@ -628,6 +739,35 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   }, [channelId, on, user?._id]);
 
   useEffect(() => {
+    if (!on) return;
+    const unsubModal = on('INTERACTION_MODAL_CREATE', (d) => {
+      const modal = d?.modal;
+      const interactionId = d?.interaction_id;
+      const interactionToken = d?.interaction_token;
+      const targetChannel = d?.channel_id || channelId;
+      if (!modal || !interactionId || !interactionToken) return;
+      if (channelId && String(targetChannel) !== String(channelId)) return;
+      setInteractionModal({
+        channel_id: targetChannel,
+        interaction_id: interactionId,
+        interaction_token: interactionToken,
+        modal,
+        values: {},
+        submitting: false,
+      });
+    });
+    const unsubEphemeral = on('INTERACTION_EPHEMERAL_CREATE', (d) => {
+      if (!d || !d.channel_id || String(d.channel_id) !== String(channelId)) return;
+      const text = String(d.content || '').trim() || (Array.isArray(d.embeds) && d.embeds[0]?.description) || 'Ephemeral response';
+      toast.success(text.slice(0, 180));
+    });
+    return () => {
+      unsubModal();
+      unsubEphemeral();
+    };
+  }, [on, channelId, toast]);
+
+  useEffect(() => {
     return () => { setTypingUserIds(new Set()); };
   }, [channelId]);
 
@@ -725,8 +865,44 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
         }
       }
     }
-    // Check for @mention autocomplete (query runs until whitespace; match display name / username / nickname by prefix)
+    // Check for #channel autocomplete (query runs until whitespace; match channel names)
+    const hashIdx = input.lastIndexOf('#');
     const atIdx = input.lastIndexOf('@');
+    if (hashIdx >= 0 && hashIdx > atIdx) {
+      const beforeHash = input[hashIdx - 1];
+      if (hashIdx === 0 || beforeHash === ' ' || beforeHash === undefined) {
+        const tail = input.slice(hashIdx + 1);
+        const spaceIdx = tail.search(/[\s\n]/);
+        const rawQuery = spaceIdx === -1 ? tail : tail.slice(0, spaceIdx);
+        if (!/\n/.test(rawQuery) && channel?.server) {
+          const query = rawQuery.toLowerCase();
+          const replaceEnd = hashIdx + 1 + rawQuery.length;
+          const items = (channelDirectory.items || [])
+            .filter((c) => {
+              const name = String(c.name || '').toLowerCase();
+              return query.length === 0 || name.startsWith(query) || name.includes(query);
+            })
+            .slice(0, 50)
+            .map((c) => ({
+              type: 'channel',
+              id: c._id,
+              name: c.name,
+              channelType: c.channel_type,
+            }));
+          if (items.length > 0) {
+            setAutocomplete({
+              items,
+              colonIdx: hashIdx,
+              mode: 'channel',
+              replaceEnd,
+            });
+            setAcSelected(0);
+            return;
+          }
+        }
+      }
+    }
+    // Check for @mention autocomplete (query runs until whitespace; match display name / username / nickname by prefix)
     if (atIdx >= 0) {
       const beforeAt = input[atIdx - 1];
       if (atIdx === 0 || beforeAt === ' ' || beforeAt === undefined) {
@@ -838,7 +1014,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       }
     }
     setAutocomplete(null);
-  }, [input, customEmojis, mentionDirectory, roleDirectory, channel, slashCommandsData]);
+  }, [input, customEmojis, mentionDirectory, channelDirectory, roleDirectory, channel, slashCommandsData]);
 
   const applyAutocomplete = (item) => {
     if (!autocomplete) return;
@@ -852,6 +1028,8 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       insert = `<@&${item.id}>`;
     } else if (item.type === 'user') {
       insert = `<@${item.id}>`;
+    } else if (item.type === 'channel') {
+      insert = `#${item.name}`;
     } else if (item.type === 'everyone') {
       insert = '@everyone';
     } else if (item.type === 'slash') {
@@ -864,7 +1042,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     } else {
       insert = item.name || '';
     }
-    if (autocomplete.mode === 'mention' && autocomplete.replaceEnd != null) {
+    if ((autocomplete.mode === 'mention' || autocomplete.mode === 'channel') && autocomplete.replaceEnd != null) {
       const after = input.slice(autocomplete.replaceEnd);
       const gap = after.length > 0 && !/^\s/.test(after) ? ' ' : '';
       setInput(before + insert + gap + after);
@@ -1087,11 +1265,128 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     try { await del(`/channels/${channelId}/messages/${msgId}/reactions/${encodeURIComponent(emoji)}`); fetchMessages(); } catch {}
   };
 
+  const openInteractionModalFromResponse = (out) => {
+    if (!(out?.modal?.modal && out?.modal?.interaction_id && out?.modal?.interaction_token)) return;
+    setInteractionModal({
+      channel_id: channelId,
+      interaction_id: out.modal.interaction_id,
+      interaction_token: out.modal.interaction_token,
+      modal: out.modal.modal,
+      values: {},
+      submitting: false,
+    });
+  };
+
+  const triggerMessageComponent = async (msg, component, values = []) => {
+    const customId = component?.custom_id;
+    if (!customId || !msg?._id) return;
+    const key = `${msg._id}:${customId}`;
+    setComponentPending((prev) => ({ ...prev, [key]: true }));
+    try {
+      const out = await post(
+        `/channels/${channelId}/messages/${msg._id}/components/${encodeURIComponent(customId)}`,
+        Array.isArray(values) && values.length > 0 ? { values } : {},
+      );
+      openInteractionModalFromResponse(out);
+    } catch {}
+    setComponentPending((prev) => ({ ...prev, [key]: false }));
+  };
+
+  const triggerMessageContextCommand = async (msg, commandName) => {
+    if (!msg?._id || !commandName) return;
+    const pendingKey = `message:${msg._id}:${commandName}`;
+    setContextCommandPending(pendingKey);
+    try {
+      const out = await post(
+        `/channels/${channelId}/messages/${msg._id}/context/${encodeURIComponent(commandName)}`,
+      );
+      openInteractionModalFromResponse(out);
+    } catch {
+      toast.error('Failed to run message app command');
+    }
+    setContextCommandPending(null);
+    setContextMenu(null);
+  };
+
+  const triggerUserContextCommand = async (msg, commandName) => {
+    const authorId = typeof msg?.author === 'object' ? msg.author?._id : msg?.author;
+    if (!authorId || !commandName) return;
+    const pendingKey = `user:${authorId}:${commandName}`;
+    setContextCommandPending(pendingKey);
+    try {
+      const out = await post(
+        `/channels/${channelId}/users/${encodeURIComponent(authorId)}/context/${encodeURIComponent(commandName)}`,
+      );
+      openInteractionModalFromResponse(out);
+    } catch {
+      toast.error('Failed to run user app command');
+    }
+    setContextCommandPending(null);
+    setContextMenu(null);
+  };
+
+  const submitInteractionModal = async (e) => {
+    e.preventDefault();
+    if (!interactionModal?.modal?.custom_id) return;
+    const fields = (interactionModal.modal.components || [])
+      .map((row) => (Array.isArray(row?.components) ? row.components[0] : null))
+      .filter((f) => f && f.type === 'text_input' && f.custom_id);
+    const values = fields.map((f) => ({
+      custom_id: f.custom_id,
+      value: String(interactionModal.values?.[f.custom_id] || ''),
+    }));
+    setInteractionModal((prev) => (prev ? { ...prev, submitting: true } : prev));
+    try {
+      await post(
+        `/channels/${interactionModal.channel_id}/interactions/${encodeURIComponent(interactionModal.interaction_id)}/${encodeURIComponent(interactionModal.interaction_token)}/modal-submit`,
+        {
+          custom_id: interactionModal.modal.custom_id,
+          values,
+        },
+      );
+      setInteractionModal(null);
+    } catch {
+      setInteractionModal((prev) => (prev ? { ...prev, submitting: false } : prev));
+    }
+  };
+
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
     setSearching(true);
     try { const res = await post(`/channels/${channelId}/search`, { query: searchQuery }); setSearchResults(res?.messages || res || []); } catch {}
     setSearching(false);
+  };
+
+  const translateMessage = async (msg) => {
+    const msgId = msg?._id;
+    if (!msgId || !msg?.content) {
+      setContextMenu(null);
+      return;
+    }
+    const targetLang = (typeof navigator !== 'undefined' && navigator.language
+      ? navigator.language
+      : 'en').split('-')[0].toLowerCase();
+
+    const existing = translatedByMsg[msgId];
+    if (existing?.target_language === targetLang) {
+      setTranslatedByMsg((prev) => {
+        const next = { ...prev };
+        delete next[msgId];
+        return next;
+      });
+      setContextMenu(null);
+      return;
+    }
+
+    setTranslateLoadingId(msgId);
+    try {
+      const data = await get(`/channels/${channelId}/messages/${msgId}/translate?lang=${encodeURIComponent(targetLang)}`);
+      setTranslatedByMsg((prev) => ({ ...prev, [msgId]: data }));
+    } catch {
+      toast.error('Failed to translate message');
+    }
+    setTranslateLoadingId(null);
+    setContextMenu(null);
   };
 
   const loadPinned = async () => { try { const msgs = await get(`/channels/${channelId}/messages?pinned=true`); setPinnedMessages(msgs || []); } catch { setPinnedMessages([]); } };
@@ -1327,6 +1622,26 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     } catch {}
   };
 
+  const messageContextItems = (slashCommandsData?.bots || [])
+    .flatMap((bot) => (bot?.context_commands?.message || []).map((cmd) => ({
+      botId: bot.bot_id,
+      botName: bot.display_name || bot.username || 'Bot',
+      name: cmd.name,
+      description: cmd.description || '',
+    })))
+    .filter((item) => !!item.name)
+    .slice(0, 8);
+
+  const userContextItems = (slashCommandsData?.bots || [])
+    .flatMap((bot) => (bot?.context_commands?.user || []).map((cmd) => ({
+      botId: bot.bot_id,
+      botName: bot.display_name || bot.username || 'Bot',
+      name: cmd.name,
+      description: cmd.description || '',
+    })))
+    .filter((item) => !!item.name)
+    .slice(0, 8);
+
   return (
     <>
     <div className="chat-area" onClick={() => { setContextMenu(null); setShowEmojiPicker(null); setShowInputEmoji(false); setShowGifPicker(false); setMentionCard(null); }}>
@@ -1504,10 +1819,80 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                   <>
                     {msg.content && hasVisibleMessageText(msg.content, msg.link_previews) && (
                       <div className={`msg-text ${isEmojiOnly(msg.content) ? 'emoji-jumbo-text' : ''}`}>
-                        {renderMessageContent(msg.content, customEmojis, user, mentionDirectory, openMentionCard, roleDirectory, setLightboxSrc, msg.link_previews)}
+                        {renderMessageContent(msg.content, customEmojis, user, mentionDirectory, openMentionCard, roleDirectory, channelDirectory, setLightboxSrc, msg.link_previews)}
+                      </div>
+                    )}
+                    {translatedByMsg[msg._id]?.translated_content && (
+                      <div className="msg-translation">
+                        <div className="msg-translation-label">
+                          Translated ({translatedByMsg[msg._id].target_language || 'en'})
+                        </div>
+                        <div className="msg-translation-text">
+                          {renderMarkdownInline(translatedByMsg[msg._id].translated_content)}
+                        </div>
                       </div>
                     )}
                     {renderMessageEmbeds(msg.embeds, { onJoinWhiteboard: openWhiteboardFromEmbed })}
+                    {Array.isArray(msg.components) && msg.components.length > 0 && (
+                      <div className="msg-components">
+                        {normalizeMessageComponentRows(msg.components).map((row, rowIdx) => (
+                          <div key={`row-${msg._id}-${rowIdx}`} className="msg-component-row">
+                            {row.map((btn, btnIdx) => {
+                              const pendingKey = `${msg._id}:${btn.custom_id || btnIdx}`;
+                              const pending = !!componentPending[pendingKey];
+                              const classes = `msg-component-btn style-${btn.style}`;
+                              if (btn.type === 'select') {
+                                return (
+                                  <select
+                                    key={`sel-${msg._id}-${rowIdx}-${btnIdx}`}
+                                    className="msg-component-select"
+                                    disabled={btn.disabled || pending}
+                                    value=""
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (!v) return;
+                                      triggerMessageComponent(msg, btn, [v]);
+                                      e.target.value = '';
+                                    }}
+                                  >
+                                    <option value="" disabled>{btn.placeholder || 'Choose an option'}</option>
+                                    {(btn.options || []).map((opt, oi) => (
+                                      <option key={`opt-${oi}-${opt.value}`} value={opt.value}>
+                                        {opt.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                );
+                              }
+                              if (btn.style === 'link' && btn.url) {
+                                return (
+                                  <a
+                                    key={`btn-${msg._id}-${rowIdx}-${btnIdx}`}
+                                    className={classes}
+                                    href={btn.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    {btn.label || 'Open'}
+                                  </a>
+                                );
+                              }
+                              return (
+                                <button
+                                  key={`btn-${msg._id}-${rowIdx}-${btnIdx}`}
+                                  type="button"
+                                  className={classes}
+                                  disabled={btn.disabled || pending}
+                                  onClick={() => triggerMessageComponent(msg, btn)}
+                                >
+                                  {pending ? '...' : (btn.label || 'Button')}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {renderLinkPreviews(msg.link_previews)}
                     {msg.attachments && msg.attachments.length > 0 && (
                       <div className="msg-attachments">
@@ -1610,6 +1995,48 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
             <div className="ctx-item" onClick={() => { contextMenu.msg.pinned ? unpinMessage(contextMenu.msg._id) : pinMessage(contextMenu.msg._id); }}>
               {contextMenu.msg.pinned ? 'Unpin Message' : 'Pin Message'}
             </div>
+            {contextMenu.msg?.content && (
+              <div className="ctx-item" onClick={() => translateMessage(contextMenu.msg)}>
+                {translateLoadingId === contextMenu.msg._id
+                  ? 'Translating...'
+                  : (translatedByMsg[contextMenu.msg._id] ? 'Hide Translation' : 'Translate Message')}
+              </div>
+            )}
+            {messageContextItems.length > 0 && (
+              <>
+                <div className="ctx-separator" />
+                {messageContextItems.map((item) => {
+                  const pending = contextCommandPending === `message:${contextMenu.msg._id}:${item.name}`;
+                  return (
+                    <div
+                      key={`ctx-msg-${item.botId}-${item.name}`}
+                      className="ctx-item"
+                      onClick={() => { if (!pending) triggerMessageContextCommand(contextMenu.msg, item.name); }}
+                    >
+                      {pending ? 'Running...' : `App: ${item.name} (${item.botName})`}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+            {userContextItems.length > 0 && !!getMessageAuthorId(contextMenu.msg) && (
+              <>
+                <div className="ctx-separator" />
+                {userContextItems.map((item) => {
+                  const authorId = getMessageAuthorId(contextMenu.msg);
+                  const pending = contextCommandPending === `user:${authorId}:${item.name}`;
+                  return (
+                    <div
+                      key={`ctx-user-${item.botId}-${item.name}`}
+                      className="ctx-item"
+                      onClick={() => { if (!pending) triggerUserContextCommand(contextMenu.msg, item.name); }}
+                    >
+                      {pending ? 'Running...' : `User App: ${item.name} (${item.botName})`}
+                    </div>
+                  );
+                })}
+              </>
+            )}
             {contextMenu.isOwn && (
               <>
                 <div className="ctx-separator" />
@@ -1637,6 +2064,45 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
             className="mention-profile-card"
             onClose={() => setMentionCard(null)}
           />
+        </>
+      )}
+
+      {interactionModal && (
+        <>
+          <div className="mention-card-backdrop" onClick={() => setInteractionModal(null)} />
+          <form className="interaction-modal" onSubmit={submitInteractionModal}>
+            <div className="interaction-modal-title">{interactionModal.modal?.title || 'Modal'}</div>
+            {(interactionModal.modal?.components || []).map((row, i) => {
+              const field = Array.isArray(row?.components) ? row.components[0] : null;
+              if (!field || field.type !== 'text_input' || !field.custom_id) return null;
+              const value = interactionModal.values?.[field.custom_id] ?? field.value ?? '';
+              return (
+                <label key={`modal-field-${i}`} className="interaction-modal-field">
+                  <span>{field.label || field.custom_id}</span>
+                  <textarea
+                    value={value}
+                    rows={field.style === 'paragraph' ? 4 : 1}
+                    minLength={field.min_length || 0}
+                    maxLength={field.max_length || 4000}
+                    required={field.required !== false}
+                    placeholder={field.placeholder || ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setInteractionModal((prev) => (prev
+                        ? { ...prev, values: { ...(prev.values || {}), [field.custom_id]: v } }
+                        : prev));
+                    }}
+                  />
+                </label>
+              );
+            })}
+            <div className="interaction-modal-actions">
+              <button type="button" className="modal-btn secondary" onClick={() => setInteractionModal(null)}>Cancel</button>
+              <button type="submit" className="modal-btn primary" disabled={!!interactionModal.submitting}>
+                {interactionModal.submitting ? 'Submitting...' : 'Submit'}
+              </button>
+            </div>
+          </form>
         </>
       )}
 
@@ -1688,6 +2154,8 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                 aria-label={
                   autocomplete.mode === 'mention'
                     ? 'Mention users and roles'
+                    : autocomplete.mode === 'channel'
+                      ? 'Channel suggestions'
                     : autocomplete.mode === 'slash'
                       ? 'Slash commands'
                       : 'Emoji suggestions'
@@ -1695,7 +2163,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               >
                 {autocomplete.items.map((item, i) => (
                   <div
-                    key={item.type === 'slash' ? `s-${item.kind}-${item.name}-${item.botId || 'builtin'}-${i}` : item.type === 'user' ? `u-${item.id}` : item.type === 'role' ? `r-${item.id}` : `${item.type}-${i}`}
+                    key={item.type === 'slash' ? `s-${item.kind}-${item.name}-${item.botId || 'builtin'}-${i}` : item.type === 'user' ? `u-${item.id}` : item.type === 'role' ? `r-${item.id}` : item.type === 'channel' ? `c-${item.id}` : `${item.type}-${i}`}
                     role="option"
                     aria-selected={i === acSelected}
                     className={`ac-item${item.type === 'slash' ? ' ac-item-slash' : ''} ${i === acSelected ? 'selected' : ''}`}
@@ -1731,6 +2199,12 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                     <><span className="ac-role-dot" style={{ background: item.colour || 'var(--text-muted)' }} /><span className="ac-name">@{item.name}</span><span className="ac-tag">Role</span></>
                   ) : item.type === 'everyone' ? (
                     <><span className="ac-role-dot everyone-dot" /><span className="ac-name">@everyone</span><span className="ac-tag">Notify all</span></>
+                  ) : item.type === 'channel' ? (
+                    <>
+                      <span className="ac-channel-hash">#</span>
+                      <span className="ac-name">{item.name}</span>
+                      <span className="ac-tag">{item.channelType === 'VoiceChannel' ? 'Voice' : item.channelType === 'Thread' ? 'Thread' : 'Channel'}</span>
+                    </>
                   ) : item.type === 'user' ? (
                     <>
                       {item.avatar ? <img src={resolveFileUrl(item.avatar)} alt="" className="ac-user-avatar" /> : <span className="ac-user-initial">{(item.name || '?')[0]?.toUpperCase()}</span>}

@@ -15,6 +15,7 @@ export const GatewayEvents = {
   MESSAGE_DELETE: 'MESSAGE_DELETE',
   MESSAGE_REACTION_ADD: 'MESSAGE_REACTION_ADD',
   MESSAGE_REACTION_REMOVE: 'MESSAGE_REACTION_REMOVE',
+  INTERACTION_CREATE: 'INTERACTION_CREATE',
   VOICE_READY: 'VoiceReady',
   VOICE_STATE_UPDATE: 'VoiceStateUpdate',
   /** Fired when a user joins a server (via invite). data: { serverId, member: { user, roles, ... } } */
@@ -97,6 +98,10 @@ export class StoatBotClient extends EventEmitter {
     return this.api('GET', '/@me');
   }
 
+  getUser(userId) {
+    return this.api('GET', `/users/${encodeURIComponent(userId)}`);
+  }
+
   /**
    * Set bot presence and/or custom status text. Shown in the member list.
    * @param {Object} opts
@@ -133,9 +138,41 @@ export class StoatBotClient extends EventEmitter {
     return this.api('GET', `/channels/${channelId}`);
   }
 
+  getServer(serverId) {
+    return this.api('GET', `/servers/${encodeURIComponent(serverId)}`);
+  }
+
+  getServerChannels(serverId) {
+    return this.api('GET', `/servers/${encodeURIComponent(serverId)}/channels`);
+  }
+
+  getServerRoles(serverId) {
+    return this.api('GET', `/servers/${encodeURIComponent(serverId)}/roles`);
+  }
+
+  getServerPermissions(serverId) {
+    return this.api('GET', `/servers/${encodeURIComponent(serverId)}/permissions`);
+  }
+
   /** List members in a server (bot must be in the server). */
   getServerMembers(serverId) {
     return this.api('GET', `/servers/${serverId}/members`);
+  }
+
+  getServerMember(serverId, memberId) {
+    return this.api('GET', `/servers/${encodeURIComponent(serverId)}/members/${encodeURIComponent(memberId)}`);
+  }
+
+  /**
+   * Edit member nickname and/or roles.
+   * Body: { nickname?: string|null, roles?: string[] }
+   */
+  editServerMember(serverId, memberId, body = {}, opts = {}) {
+    const payload = { ...body };
+    if (opts.invokerUserId != null && opts.invokerUserId !== '') {
+      payload.invoker_user_id = String(opts.invokerUserId);
+    }
+    return this.api('PATCH', `/servers/${encodeURIComponent(serverId)}/members/${encodeURIComponent(memberId)}`, payload, opts);
   }
 
   /**
@@ -172,6 +209,10 @@ export class StoatBotClient extends EventEmitter {
       Object.keys(payload).length ? payload : undefined,
       opts,
     );
+  }
+
+  listServerBans(serverId, opts = {}) {
+    return this.api('GET', `/servers/${encodeURIComponent(serverId)}/bans`, undefined, opts);
   }
 
   /** Unban a user id. `invokerUserId` is sent as a header when the body is empty. */
@@ -223,6 +264,53 @@ export class StoatBotClient extends EventEmitter {
     return this.api('DELETE', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`);
   }
 
+  /**
+   * Send an interaction callback for INTERACTION_CREATE payloads.
+   * Body shape: { type: 4|5|6|7|9, data?: { ... } }
+   */
+  createInteractionResponse(interactionId, interactionToken, body = {}) {
+    return this.api(
+      'POST',
+      `/interactions/${encodeURIComponent(interactionId)}/${encodeURIComponent(interactionToken)}/callback`,
+      body,
+    );
+  }
+
+  /**
+   * Convenience helper for deferred replies.
+   * Set { ephemeral: true } to defer as ephemeral.
+   */
+  deferInteraction(interactionId, interactionToken, { ephemeral = false } = {}) {
+    return this.createInteractionResponse(interactionId, interactionToken, {
+      type: 5,
+      data: ephemeral ? { flags: 64 } : {},
+    });
+  }
+
+  /**
+   * Send additional follow-up messages for an interaction.
+   * Body can be { content, embeds, components, flags }.
+   */
+  createInteractionFollowup(interactionId, interactionToken, body = {}) {
+    return this.api(
+      'POST',
+      `/interactions/${encodeURIComponent(interactionId)}/${encodeURIComponent(interactionToken)}/followups`,
+      body,
+    );
+  }
+
+  /**
+   * Edit the original interaction response.
+   * If the interaction was deferred and no original exists yet, this creates it.
+   */
+  editInteractionOriginal(interactionId, interactionToken, body = {}) {
+    return this.api(
+      'PATCH',
+      `/interactions/${encodeURIComponent(interactionId)}/${encodeURIComponent(interactionToken)}/original`,
+      body,
+    );
+  }
+
   onEvent(eventName, handler) {
     this.on(eventName, handler);
     return () => this.off(eventName, handler);
@@ -230,6 +318,10 @@ export class StoatBotClient extends EventEmitter {
 
   onMessage(handler) {
     return this.onEvent(GatewayEvents.MESSAGE_CREATE, handler);
+  }
+
+  onInteraction(handler) {
+    return this.onEvent(GatewayEvents.INTERACTION_CREATE, handler);
   }
 
   command(name, handler, options = {}) {
@@ -416,6 +508,221 @@ export class EmbedBuilder {
 
   toJSON() {
     return { ...this.embed };
+  }
+}
+
+export const ButtonStyle = {
+  PRIMARY: 'primary',
+  SECONDARY: 'secondary',
+  SUCCESS: 'success',
+  DANGER: 'danger',
+  LINK: 'link',
+};
+
+export class ButtonBuilder {
+  constructor(initial = {}) {
+    this.button = { type: 'button', ...initial };
+  }
+
+  setCustomId(customId) {
+    this.button.custom_id = customId == null ? undefined : String(customId).slice(0, 100);
+    return this;
+  }
+
+  setLabel(label) {
+    this.button.label = label == null ? undefined : String(label).slice(0, 80);
+    return this;
+  }
+
+  setStyle(style) {
+    this.button.style = style == null ? undefined : String(style).toLowerCase();
+    return this;
+  }
+
+  setUrl(url) {
+    this.button.url = url == null ? undefined : String(url).slice(0, 512);
+    return this;
+  }
+
+  setDisabled(disabled = true) {
+    this.button.disabled = !!disabled;
+    return this;
+  }
+
+  toJSON() {
+    return { ...this.button };
+  }
+}
+
+export class SelectMenuBuilder {
+  constructor(initial = {}) {
+    this.menu = { type: 'select', options: [], ...initial };
+    if (!Array.isArray(this.menu.options)) this.menu.options = [];
+  }
+
+  setCustomId(customId) {
+    this.menu.custom_id = customId == null ? undefined : String(customId).slice(0, 100);
+    return this;
+  }
+
+  setPlaceholder(placeholder) {
+    this.menu.placeholder = placeholder == null ? undefined : String(placeholder).slice(0, 100);
+    return this;
+  }
+
+  setMinValues(minValues) {
+    this.menu.min_values = Math.max(0, Number(minValues) || 0);
+    return this;
+  }
+
+  setMaxValues(maxValues) {
+    this.menu.max_values = Math.max(1, Number(maxValues) || 1);
+    return this;
+  }
+
+  setDisabled(disabled = true) {
+    this.menu.disabled = !!disabled;
+    return this;
+  }
+
+  addOptions(...options) {
+    const flat = options.flat();
+    for (const opt of flat) {
+      if (!opt) continue;
+      const o = opt?.toJSON ? opt.toJSON() : opt;
+      this.menu.options.push({
+        label: String(o.label || '').slice(0, 100),
+        value: String(o.value || '').slice(0, 100),
+        description: o.description == null ? undefined : String(o.description).slice(0, 100),
+        default: !!o.default,
+      });
+    }
+    return this;
+  }
+
+  toJSON() {
+    return {
+      ...this.menu,
+      options: Array.isArray(this.menu.options) ? [...this.menu.options] : [],
+    };
+  }
+}
+
+export const TextInputStyle = {
+  SHORT: 'short',
+  PARAGRAPH: 'paragraph',
+};
+
+export class TextInputBuilder {
+  constructor(initial = {}) {
+    this.input = { type: 'text_input', style: TextInputStyle.SHORT, ...initial };
+  }
+
+  setCustomId(customId) {
+    this.input.custom_id = customId == null ? undefined : String(customId).slice(0, 100);
+    return this;
+  }
+
+  setLabel(label) {
+    this.input.label = label == null ? undefined : String(label).slice(0, 45);
+    return this;
+  }
+
+  setStyle(style) {
+    const s = String(style || '').toLowerCase();
+    this.input.style = s === TextInputStyle.PARAGRAPH ? TextInputStyle.PARAGRAPH : TextInputStyle.SHORT;
+    return this;
+  }
+
+  setPlaceholder(placeholder) {
+    this.input.placeholder = placeholder == null ? undefined : String(placeholder).slice(0, 100);
+    return this;
+  }
+
+  setMinLength(minLength) {
+    this.input.min_length = Math.max(0, Number(minLength) || 0);
+    return this;
+  }
+
+  setMaxLength(maxLength) {
+    this.input.max_length = Math.max(1, Number(maxLength) || 1);
+    return this;
+  }
+
+  setRequired(required = true) {
+    this.input.required = !!required;
+    return this;
+  }
+
+  setValue(value) {
+    this.input.value = value == null ? undefined : String(value).slice(0, 4000);
+    return this;
+  }
+
+  toJSON() {
+    return { ...this.input };
+  }
+}
+
+export class ModalBuilder {
+  constructor(initial = {}) {
+    this.modal = {
+      custom_id: initial.custom_id || initial.customId || undefined,
+      title: initial.title || undefined,
+      components: Array.isArray(initial.components) ? [...initial.components] : [],
+    };
+  }
+
+  setCustomId(customId) {
+    this.modal.custom_id = customId == null ? undefined : String(customId).slice(0, 100);
+    return this;
+  }
+
+  setTitle(title) {
+    this.modal.title = title == null ? undefined : String(title).slice(0, 45);
+    return this;
+  }
+
+  addComponents(...rows) {
+    const flat = rows.flat();
+    for (const r of flat) {
+      if (!r) continue;
+      this.modal.components.push(r?.toJSON ? r.toJSON() : r);
+    }
+    return this;
+  }
+
+  toJSON() {
+    return {
+      custom_id: this.modal.custom_id,
+      title: this.modal.title,
+      components: Array.isArray(this.modal.components) ? [...this.modal.components] : [],
+    };
+  }
+}
+
+export class ActionRowBuilder {
+  constructor(initial = {}) {
+    this.row = {
+      type: 'action_row',
+      components: Array.isArray(initial.components) ? [...initial.components] : [],
+    };
+  }
+
+  addComponents(...components) {
+    const flat = components.flat();
+    for (const c of flat) {
+      if (!c) continue;
+      this.row.components.push(c?.toJSON ? c.toJSON() : c);
+    }
+    return this;
+  }
+
+  toJSON() {
+    return {
+      type: 'action_row',
+      components: Array.isArray(this.row.components) ? [...this.row.components] : [],
+    };
   }
 }
 

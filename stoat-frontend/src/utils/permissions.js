@@ -87,7 +87,7 @@ export function hasEffectiveRolePermission(bitfield, perm) {
  * Toggle one permission in a role bitfield. If Administrator is set, turning off any other
  * permission clears Administrator and that bit (Discord-style).
  */
-export function coerceConsistentServerPermissions(raw) {
+function coerceConsistentServerPermissions(raw) {
   let p = Number(raw) || 0;
   if ((p & Permissions.SEND_MESSAGES) === Permissions.SEND_MESSAGES) {
     p |= Permissions.READ_MESSAGES;
@@ -97,6 +97,8 @@ export function coerceConsistentServerPermissions(raw) {
   }
   return p >>> 0;
 }
+
+export { coerceConsistentServerPermissions };
 
 export function toggleRolePermissionBitmask(value, permKey, bit) {
   const v = Number(value) || 0;

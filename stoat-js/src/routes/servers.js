@@ -26,6 +26,65 @@ async function getServerAndMember(req, res) {
   return { server, member, perms };
 }
 
+function sanitizeWordList(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .map((w) => String(w || '').trim().toLowerCase())
+    .filter(Boolean)
+    .map((w) => w.slice(0, 50)))]
+    .slice(0, 120);
+}
+
+function normalizeAutomodInput(base = {}, input = {}) {
+  const current = typeof base === 'object' && base ? base : {};
+  const src = typeof input === 'object' && input ? input : {};
+  return {
+    enabled: src.enabled != null ? !!src.enabled : !!current.enabled,
+    blocked_words: src.blocked_words !== undefined
+      ? sanitizeWordList(src.blocked_words)
+      : sanitizeWordList(current.blocked_words || []),
+    block_invites: src.block_invites != null ? !!src.block_invites : !!current.block_invites,
+    max_mentions: Math.max(0, Math.min(30, Number(
+      src.max_mentions != null ? src.max_mentions : (current.max_mentions || 0),
+    ) || 0)),
+  };
+}
+
+function eventCounts(event) {
+  return {
+    yes: Array.isArray(event?.rsvp_yes) ? event.rsvp_yes.length : 0,
+    no: Array.isArray(event?.rsvp_no) ? event.rsvp_no.length : 0,
+    maybe: Array.isArray(event?.rsvp_maybe) ? event.rsvp_maybe.length : 0,
+  };
+}
+
+function getUserRsvpStatus(event, userId) {
+  if (Array.isArray(event?.rsvp_yes) && event.rsvp_yes.includes(userId)) return 'yes';
+  if (Array.isArray(event?.rsvp_no) && event.rsvp_no.includes(userId)) return 'no';
+  if (Array.isArray(event?.rsvp_maybe) && event.rsvp_maybe.includes(userId)) return 'maybe';
+  return 'none';
+}
+
+function normalizeEventDto(event, userId) {
+  const counts = eventCounts(event);
+  return {
+    _id: event._id,
+    title: event.title,
+    description: event.description || '',
+    location: event.location || '',
+    channel_id: event.channel_id || null,
+    starts_at: event.starts_at,
+    ends_at: event.ends_at || null,
+    creator: event.creator,
+    created_at: event.created_at,
+    updated_at: event.updated_at,
+    rsvp: {
+      counts,
+      me: getUserRsvpStatus(event, userId),
+    },
+  };
+}
+
 // POST /servers/create
 router.post('/create', authMiddleware(), async (req, res) => {
   const { name, description } = req.body || {};
@@ -71,6 +130,176 @@ router.get('/:target', authMiddleware(), async (req, res) => {
   });
 });
 
+// GET /servers/:target/automod
+router.get('/:target/automod', authMiddleware(), async (req, res) => {
+  const ctx = await getServerAndMember(req, res);
+  if (!ctx) return;
+  const automod = normalizeAutomodInput(ctx.server.automod, {});
+  res.json(automod);
+});
+
+// PATCH /servers/:target/automod
+router.patch('/:target/automod', authMiddleware(), async (req, res) => {
+  const ctx = await getServerAndMember(req, res);
+  if (!ctx) return;
+  if (!hasPermission(ctx.perms, Permissions.MANAGE_SERVER)) {
+    return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_SERVER permission' });
+  }
+  const automod = normalizeAutomodInput(ctx.server.automod, req.body || {});
+  ctx.server.automod = automod;
+  ctx.server.word_filter = automod.blocked_words;
+  ctx.server.markModified('automod');
+  await ctx.server.save();
+  res.json(automod);
+});
+
+// GET /servers/:target/events
+router.get('/:target/events', authMiddleware(), async (req, res) => {
+  const ctx = await getServerAndMember(req, res);
+  if (!ctx) return;
+  const mode = String(req.query.mode || 'upcoming').toLowerCase();
+  const now = Date.now();
+  const allEvents = Array.isArray(ctx.server.events) ? ctx.server.events : [];
+  const filtered = allEvents.filter((ev) => {
+    if (mode === 'all') return true;
+    const startsAt = new Date(ev.starts_at).getTime();
+    const endsAt = ev.ends_at ? new Date(ev.ends_at).getTime() : startsAt;
+    return endsAt >= now;
+  });
+  filtered.sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
+  res.json(filtered.map((event) => normalizeEventDto(event, req.userId)));
+});
+
+// POST /servers/:target/events
+router.post('/:target/events', authMiddleware(), async (req, res) => {
+  const ctx = await getServerAndMember(req, res);
+  if (!ctx) return;
+  if (!hasPermission(ctx.perms, Permissions.MANAGE_SERVER)) {
+    return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_SERVER permission' });
+  }
+  const title = String(req.body?.title || '').trim().slice(0, 120);
+  const startsAtRaw = req.body?.starts_at;
+  if (!title) return res.status(400).json({ type: 'InvalidPayload', error: 'title required' });
+  if (!startsAtRaw) return res.status(400).json({ type: 'InvalidPayload', error: 'starts_at required' });
+  const startsAt = new Date(startsAtRaw);
+  if (Number.isNaN(startsAt.getTime())) {
+    return res.status(400).json({ type: 'InvalidPayload', error: 'starts_at must be a valid date' });
+  }
+  const endsAtRaw = req.body?.ends_at;
+  const endsAt = endsAtRaw ? new Date(endsAtRaw) : null;
+  if (endsAtRaw && Number.isNaN(endsAt.getTime())) {
+    return res.status(400).json({ type: 'InvalidPayload', error: 'ends_at must be a valid date' });
+  }
+  if (endsAt && endsAt.getTime() < startsAt.getTime()) {
+    return res.status(400).json({ type: 'InvalidPayload', error: 'ends_at must be >= starts_at' });
+  }
+
+  const event = {
+    _id: ulid(),
+    title,
+    description: String(req.body?.description || '').slice(0, 2000),
+    location: String(req.body?.location || '').slice(0, 120),
+    channel_id: req.body?.channel_id ? String(req.body.channel_id) : null,
+    starts_at: startsAt,
+    ends_at: endsAt || null,
+    creator: req.userId,
+    rsvp_yes: [],
+    rsvp_no: [],
+    rsvp_maybe: [],
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+  ctx.server.events = Array.isArray(ctx.server.events) ? ctx.server.events : [];
+  ctx.server.events.push(event);
+  ctx.server.markModified('events');
+  await ctx.server.save();
+  res.status(201).json(normalizeEventDto(event, req.userId));
+});
+
+// PATCH /servers/:target/events/:event_id
+router.patch('/:target/events/:event_id', authMiddleware(), async (req, res) => {
+  const ctx = await getServerAndMember(req, res);
+  if (!ctx) return;
+  if (!hasPermission(ctx.perms, Permissions.MANAGE_SERVER)) {
+    return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_SERVER permission' });
+  }
+  const events = Array.isArray(ctx.server.events) ? ctx.server.events : [];
+  const idx = events.findIndex((ev) => String(ev._id) === String(req.params.event_id));
+  if (idx < 0) return res.status(404).json({ type: 'NotFound', error: 'Event not found' });
+  const event = events[idx];
+
+  if (req.body?.title != null) event.title = String(req.body.title).trim().slice(0, 120);
+  if (req.body?.description != null) event.description = String(req.body.description).slice(0, 2000);
+  if (req.body?.location != null) event.location = String(req.body.location).slice(0, 120);
+  if (req.body?.channel_id !== undefined) event.channel_id = req.body.channel_id ? String(req.body.channel_id) : null;
+  if (req.body?.starts_at != null) {
+    const parsed = new Date(req.body.starts_at);
+    if (Number.isNaN(parsed.getTime())) {
+      return res.status(400).json({ type: 'InvalidPayload', error: 'starts_at must be a valid date' });
+    }
+    event.starts_at = parsed;
+  }
+  if (req.body?.ends_at !== undefined) {
+    if (req.body.ends_at == null || req.body.ends_at === '') {
+      event.ends_at = null;
+    } else {
+      const parsedEnd = new Date(req.body.ends_at);
+      if (Number.isNaN(parsedEnd.getTime())) {
+        return res.status(400).json({ type: 'InvalidPayload', error: 'ends_at must be a valid date' });
+      }
+      event.ends_at = parsedEnd;
+    }
+  }
+  if (event.ends_at && new Date(event.ends_at).getTime() < new Date(event.starts_at).getTime()) {
+    return res.status(400).json({ type: 'InvalidPayload', error: 'ends_at must be >= starts_at' });
+  }
+  event.updated_at = new Date();
+  ctx.server.markModified('events');
+  await ctx.server.save();
+  res.json(normalizeEventDto(event, req.userId));
+});
+
+// DELETE /servers/:target/events/:event_id
+router.delete('/:target/events/:event_id', authMiddleware(), async (req, res) => {
+  const ctx = await getServerAndMember(req, res);
+  if (!ctx) return;
+  if (!hasPermission(ctx.perms, Permissions.MANAGE_SERVER)) {
+    return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_SERVER permission' });
+  }
+  const events = Array.isArray(ctx.server.events) ? ctx.server.events : [];
+  const next = events.filter((ev) => String(ev._id) !== String(req.params.event_id));
+  if (next.length === events.length) return res.status(404).json({ type: 'NotFound', error: 'Event not found' });
+  ctx.server.events = next;
+  ctx.server.markModified('events');
+  await ctx.server.save();
+  res.status(204).send();
+});
+
+// PUT /servers/:target/events/:event_id/rsvp
+router.put('/:target/events/:event_id/rsvp', authMiddleware(), async (req, res) => {
+  const ctx = await getServerAndMember(req, res);
+  if (!ctx) return;
+  const events = Array.isArray(ctx.server.events) ? ctx.server.events : [];
+  const idx = events.findIndex((ev) => String(ev._id) === String(req.params.event_id));
+  if (idx < 0) return res.status(404).json({ type: 'NotFound', error: 'Event not found' });
+  const status = String(req.body?.status || '').toLowerCase();
+  if (!['yes', 'no', 'maybe', 'none'].includes(status)) {
+    return res.status(400).json({ type: 'InvalidPayload', error: 'status must be yes, no, maybe, or none' });
+  }
+  const event = events[idx];
+  const uid = req.userId;
+  event.rsvp_yes = (event.rsvp_yes || []).filter((id) => id !== uid);
+  event.rsvp_no = (event.rsvp_no || []).filter((id) => id !== uid);
+  event.rsvp_maybe = (event.rsvp_maybe || []).filter((id) => id !== uid);
+  if (status === 'yes') event.rsvp_yes.push(uid);
+  if (status === 'no') event.rsvp_no.push(uid);
+  if (status === 'maybe') event.rsvp_maybe.push(uid);
+  event.updated_at = new Date();
+  ctx.server.markModified('events');
+  await ctx.server.save();
+  res.json(normalizeEventDto(event, req.userId));
+});
+
 // PATCH /servers/:target
 router.patch('/:target', authMiddleware(), async (req, res) => {
   const ctx = await getServerAndMember(req, res);
@@ -78,7 +307,9 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   if (!hasPermission(ctx.perms, Permissions.MANAGE_SERVER)) {
     return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_SERVER permission' });
   }
-  const { name, description, icon, banner, default_permissions, locked, word_filter } = req.body || {};
+  const {
+    name, description, icon, banner, default_permissions, locked, word_filter, automod,
+  } = req.body || {};
   if (name != null) ctx.server.name = String(name).slice(0, 32);
   if (description != null) ctx.server.description = description;
   if (icon != null) ctx.server.icon = icon;
@@ -90,7 +321,16 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
     ctx.server.locked = !!locked;
   }
   if (word_filter !== undefined) {
-    ctx.server.word_filter = Array.isArray(word_filter) ? word_filter.map((w) => String(w).slice(0, 50)).slice(0, 100) : [];
+    const cleaned = sanitizeWordList(word_filter);
+    ctx.server.word_filter = cleaned;
+    ctx.server.automod = normalizeAutomodInput(ctx.server.automod, { blocked_words: cleaned });
+    ctx.server.markModified('automod');
+  }
+  if (automod !== undefined) {
+    const next = normalizeAutomodInput(ctx.server.automod, automod);
+    ctx.server.automod = next;
+    ctx.server.word_filter = next.blocked_words;
+    ctx.server.markModified('automod');
   }
   await ctx.server.save();
   res.json(ctx.server.toObject());

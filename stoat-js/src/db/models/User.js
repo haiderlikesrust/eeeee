@@ -94,7 +94,7 @@ userSchema.index({ username: 1, discriminator: 1 }, { unique: true });
 /** Unique only for real tokens; omit field when unset (multiple users without a token). */
 userSchema.index(
   { presence_api_token: 1 },
-  { unique: true, partialFilterExpression: { presence_api_token: { $exists: true, $ne: null } } },
+  { unique: true, partialFilterExpression: { presence_api_token: { $type: 'string' } } },
 );
 userSchema.index({ presence_api_expires_at: 1 }, { sparse: true });
 

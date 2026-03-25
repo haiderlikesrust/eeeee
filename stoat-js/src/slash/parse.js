@@ -21,6 +21,7 @@ export const RESERVED_BUILTIN_NAMES = new Set(['help', 'ping', 'shrug', 'tablefl
 
 export const SLASH_NAME_RE = /^[a-z0-9_-]{1,32}$/;
 export const MAX_SLASH_COMMANDS_PER_BOT = 100;
+export const COMMAND_TYPES = new Set(['CHAT_INPUT', 'USER', 'MESSAGE']);
 
 export function normalizeSlashCommandsInput(raw) {
   if (!Array.isArray(raw)) return { error: 'slash_commands must be an array' };
@@ -33,15 +34,20 @@ export function normalizeSlashCommandsInput(raw) {
     if (!row || typeof row !== 'object') return { error: 'Invalid slash command entry' };
     const name = String(row.name || '').trim().toLowerCase();
     const description = String(row.description ?? '').slice(0, 100);
+    const type = String(row.type || 'CHAT_INPUT').toUpperCase();
+    if (!COMMAND_TYPES.has(type)) {
+      return { error: `Invalid command type for "${name || '(empty)'}": ${type}` };
+    }
     if (!SLASH_NAME_RE.test(name)) {
       return { error: `Invalid command name: ${name || '(empty)'}` };
     }
-    if (RESERVED_BUILTIN_NAMES.has(name)) {
+    if (type === 'CHAT_INPUT' && RESERVED_BUILTIN_NAMES.has(name)) {
       return { error: `Command name "${name}" is reserved for built-in commands` };
     }
-    if (seen.has(name)) return { error: `Duplicate command name: ${name}` };
-    seen.add(name);
-    out.push({ name, description });
+    const key = `${type}:${name}`;
+    if (seen.has(key)) return { error: `Duplicate command: ${type} ${name}` };
+    seen.add(key);
+    out.push({ name, description, type });
   }
   return { commands: out };
 }
