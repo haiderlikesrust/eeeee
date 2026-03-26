@@ -1,15 +1,29 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+/** Normalize module id for stable chunk matching (Windows vs POSIX paths). */
+function normId(id) {
+  return id.replace(/\\/g, '/')
+}
+
 export default defineConfig({
   plugins: [react()],
+  // Ensure a single React instance in the bundle (avoids "Cannot read properties of null (reading 'useState')" in prod).
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+  },
   build: {
     rollupOptions: {
       output: {
-        manualChunks: (id) => {
-          if (id.includes('node_modules')) {
-            if (id.includes('react-dom') || id.includes('react/')) return 'react';
-            if (id.includes('react-router')) return 'router';
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          const n = normId(id)
+          // Keep react, react-dom, and scheduler together — splitting scheduler out breaks the hook dispatcher in production.
+          if (/\/node_modules\/(react-dom|react|scheduler)(\/|$)/.test(n)) {
+            return 'vendor-react'
+          }
+          if (n.includes('react-router')) {
+            return 'vendor-router'
           }
         },
       },
