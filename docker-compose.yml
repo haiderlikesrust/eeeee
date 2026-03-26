@@ -1,3 +1,8 @@
+# Opic @ https://opic.fun — production-oriented defaults for Docker + nginx reverse proxy.
+# Browser app uses same-origin /api and /ws (see deploy-nginx-opic.fun.conf). Stoat’s gateway path is /
+# internally; nginx maps public /ws → backend /, so WS_URL is wss://opic.fun/ws for GET / hints and clients.
+# Override any value with a root .env or `export VAR=...` before `docker compose up`.
+
 services:
   mongo:
     image: mongo:7
@@ -14,8 +19,9 @@ services:
       NODE_ENV: production
       PORT: 14702
       MONGODB_URI: mongodb://mongo:27017/stoat
-      APP_URL: ${APP_URL:-http://localhost}
-      WS_URL: ${WS_URL:-ws://localhost/ws}
+      APP_URL: ${APP_URL:-https://opic.fun}
+      WS_URL: ${WS_URL:-wss://opic.fun/ws}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://opic.fun,https://www.opic.fun}
     depends_on:
       - mongo
     volumes:
