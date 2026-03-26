@@ -1,6 +1,11 @@
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useMobile } from '../context/MobileContext';
+import { useWS } from '../context/WebSocketContext';
+import { useToast } from '../context/ToastContext';
+import { get } from '../api';
+import { resolveFileUrl } from '../utils/avatarUrl';
 import './MeHomePage.css';
 
 function IconServers() {
@@ -14,7 +19,7 @@ function IconServers() {
 function IconFriends() {
   return (
     <svg className="me-home-card-icon-svg" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-      <path fill="currentColor" d="M12 12.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM12.6 14h-1.2a5.4 5.4 0 0 0-5.4 5.36 .6.6 0 0 0 .6.64h10.8a.6.6 0 0 0 .6-.64A5.4 5.4 0 0 0 12.6 14Z" />
+      <path fill="currentColor" d="M12 11a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Zm-7 9a7 7 0 0 1 14 0H5Z" />
     </svg>
   );
 }
@@ -30,7 +35,94 @@ function IconSpark() {
 export default function MeHomePage() {
   const { user } = useAuth();
   const { isMobile, openChannelSidebar } = useMobile();
+  const { connected, send, on } = useWS();
+  const toast = useToast();
+  const navigate = useNavigate();
   const name = user?.display_name || user?.username || 'there';
+
+  const [discoverList, setDiscoverList] = useState([]);
+  const [discoverLoading, setDiscoverLoading] = useState(true);
+  const wsDiscoverReceived = useRef(false);
+  const joinWsPending = useRef(false);
+
+  const loadDiscoverHttp = useCallback(async () => {
+    try {
+      const d = await get('/servers/discover');
+      setDiscoverList(Array.isArray(d?.servers) ? d.servers : []);
+    } catch {
+      setDiscoverList([]);
+    }
+    setDiscoverLoading(false);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    wsDiscoverReceived.current = false;
+    setDiscoverLoading(true);
+
+    const finishWs = () => {
+      if (!cancelled) setDiscoverLoading(false);
+    };
+
+    if (connected) {
+      const offOk = on('DiscoverServers', (data) => {
+        wsDiscoverReceived.current = true;
+        if (!cancelled) setDiscoverList(Array.isArray(data?.servers) ? data.servers : []);
+        finishWs();
+      });
+      const offErr = on('DiscoverServersError', () => {
+        loadDiscoverHttp();
+      });
+      send({ type: 'DiscoverServersRequest', d: { limit: 24 } });
+      const t = setTimeout(() => {
+        if (!cancelled && !wsDiscoverReceived.current) loadDiscoverHttp();
+      }, 2000);
+      return () => {
+        cancelled = true;
+        offOk();
+        offErr();
+        clearTimeout(t);
+      };
+    }
+
+    loadDiscoverHttp();
+    return () => { cancelled = true; };
+  }, [connected, on, send, loadDiscoverHttp]);
+
+  const joinDiscoverServer = useCallback(
+    (slug) => {
+      if (!slug) return;
+      if (connected) {
+        if (joinWsPending.current) return;
+        joinWsPending.current = true;
+        const unsubs = [];
+        const done = () => {
+          unsubs.forEach((u) => u());
+          joinWsPending.current = false;
+        };
+        unsubs.push(
+          on('JoinPublicServer', (d) => {
+            done();
+            if (d?.serverId) {
+              navigate(`/channels/${d.serverId}`);
+              toast.success('Joined server');
+            }
+          }),
+        );
+        unsubs.push(
+          on('JoinPublicServerError', (e) => {
+            done();
+            toast.error(e?.error || 'Could not join');
+            navigate(`/invite/${slug}`);
+          }),
+        );
+        send({ type: 'JoinPublicServerRequest', d: { slug } });
+        return;
+      }
+      navigate(`/invite/${slug}`);
+    },
+    [connected, navigate, on, send, toast],
+  );
 
   return (
     <div className="me-home-page">
@@ -66,6 +158,59 @@ export default function MeHomePage() {
             chat, hang out, and build communities in one place.
           </p>
         </header>
+
+        <section className="me-home-discover" aria-labelledby="me-home-discover-heading">
+          <h2 id="me-home-discover-heading" className="me-home-discover-title">
+            Discover servers
+          </h2>
+          <p className="me-home-discover-sub">Public communities you can join in one click.</p>
+          {discoverLoading && <p className="me-home-discover-loading">Loading…</p>}
+          {!discoverLoading && discoverList.length === 0 && (
+            <p className="me-home-discover-empty">No public servers yet. Check back later.</p>
+          )}
+          {!discoverLoading && discoverList.length > 0 && (
+            <div className="me-home-discover-grid">
+              {discoverList.map((s) => {
+                const bannerUrl = resolveFileUrl(s.banner);
+                const iconUrl = resolveFileUrl(s.icon);
+                return (
+                  <article key={s.id} className="me-home-discover-card">
+                    <div
+                      className="me-home-discover-card-banner"
+                      style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : undefined}
+                    />
+                    <div className="me-home-discover-card-body">
+                      <div className="me-home-discover-card-icon">
+                        {iconUrl ? (
+                          <img src={iconUrl} alt="" />
+                        ) : (
+                          <span>{(s.name || 'S').slice(0, 2).toUpperCase()}</span>
+                        )}
+                      </div>
+                      <div className="me-home-discover-card-text">
+                        <h3 className="me-home-discover-card-name">{s.name}</h3>
+                        <p className="me-home-discover-card-desc">
+                          {(s.description || '').slice(0, 120)}
+                          {(s.description || '').length > 120 ? '…' : ''}
+                        </p>
+                        <span className="me-home-discover-card-meta">
+                          {typeof s.member_count === 'number' ? `${s.member_count} members` : ''}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="me-home-discover-join"
+                        onClick={() => joinDiscoverServer(s.slug)}
+                      >
+                        Join
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
 
         <div className="me-home-grid" role="list">
           <article className="me-home-card me-home-card-emerald" role="listitem">

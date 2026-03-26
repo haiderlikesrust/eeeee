@@ -1,161 +1,311 @@
-# Feature parity: Rust backend vs stoat-js
+# Stoat API Features and Route Map
 
-This JavaScript port implements **all** REST API features from the [Rust Stoat backend](https://github.com/stoatchat/stoatchat) (delta). No Docker or Redis.
+This file is a detailed feature inventory with route-level coverage from `stoat-js/src/routes`.
 
----
+## Base and Versioning
 
-## Implemented
+- Base API: `/`
+- Version alias: every major route group is also mounted at `/0.8/*`
+- Example: `/channels/:id/messages` is available at both:
+  - `/channels/:id/messages`
+  - `/0.8/channels/:id/messages`
 
-### Root
-- `GET /` – API info
+## Root and Health
 
-### Auth
-- `POST /auth/account/register` – Register
-- `POST /auth/session/login` – Login
-- `GET /auth/session` – List sessions
-- `DELETE /auth/session/:id` – Logout
-- `PATCH /auth/account` – Change password
-- `POST /auth/mfa/*` – MFA stubs (ticket, recovery, webauthn, totp) for API compatibility
+- `GET /` - API info and build metadata
+- `GET /health` - liveness
+- `GET /ready` - readiness
 
-### Users
-- `GET /users/@me`, `PATCH /users/@me`
-- `PATCH /users/@me/username` – Change username (with password)
-- `GET /users/dms` – List DMs
-- `POST /users/friend` – Send/accept friend request
-- `GET /users/:target`, `PATCH /users/:target`
-- `GET /users/:target/dm` – Open DM (or saved messages for self)
-- `GET /users/:target/profile` – Profile
-- `GET /users/:target/flags` – User flags
-- `GET /users/:target/mutual` – Mutual friends/servers/channels
-- `GET /users/:target/default_avatar` – Redirect to default avatar
-- `PUT /users/:target/friend` – Accept friend request
-- `DELETE /users/:target/friend` – Remove friend
-- `PUT /users/:target/block` – Block user
-- `DELETE /users/:target/block` – Unblock user
+## Public Presence API (`/public/v1`)
 
-### Bots
-- `POST /bots/create` – Create bot
-- `GET /bots/@me` – List own bots
-- `GET /bots/:bot` – Fetch bot
-- `GET /bots/:target/invite` – Public bot invite info
-- `POST /bots/:target/invite` – Invite bot to server or group
-- `PATCH /bots/:target` – Edit bot
-- `DELETE /bots/:target` – Delete bot
+- `PATCH /public/v1/presence` - update presence via token (external/presence API)
 
-### Channels
-- `POST /channels/create` – Create group
-- `GET /channels/:target`, `PATCH /channels/:target`, `DELETE /channels/:target`
-- `PUT /channels/:target/ack/:message` – Ack (read) message
-- `GET /channels/:target/messages` – List messages (query: limit, before, after, sort)
-- `GET /channels/:target/messages/:msg` – Fetch one message
-- `POST /channels/:target/messages` – Send message
-- `PATCH /channels/:target/messages/:msg` – Edit message
-- `DELETE /channels/:target/messages/:msg` – Delete message
-- `DELETE /channels/:target/messages/bulk` – Bulk delete (body: ids)
-- `POST /channels/:target/messages/:msg/pin` – Pin message
-- `DELETE /channels/:target/messages/:msg/pin` – Unpin
-- `PUT /channels/:target/messages/:msg/reactions/:emoji` – React
-- `DELETE /channels/:target/messages/:msg/reactions/:emoji` – Unreact
-- `DELETE /channels/:target/messages/:msg/reactions` – Clear reactions
-- `POST /channels/:target/search` – Message search (body: query, limit)
-- `POST /channels/:target/invites` – Create invite
-- `GET /channels/:target/members` – Group members
-- `PUT /channels/:group/recipients/:member` – Add to group
-- `DELETE /channels/:target/recipients/:member` – Remove from group
-- `PUT /channels/:target/permissions/default`, `PUT /channels/:target/permissions/:role_id`
-- `POST /channels/:target/webhooks`, `GET /channels/:target/webhooks`
-- `POST /channels/:target/join_call`, `PUT /channels/:target/end_ring/:user` – Voice stubs
+## Auth and Sessions (`/auth`)
 
-### Servers
-- `POST /servers/create` – Create server
-- `GET /servers/:target`, `PATCH /servers/:target`, `DELETE /servers/:target`
-- `PUT /servers/:target/ack` – Ack server
-- `GET /servers/:target/members`, `GET /servers/:target/members/:member`
-- `PATCH /servers/:target/members/:member` – Edit member (nickname, roles)
-- `DELETE /servers/:target/members/:member` – Remove member
+- `POST /auth/account/register` - register account
+- `POST /auth/account/create` - register alias
+- `POST /auth/account/verify/:token` - verify account stub
+- `POST /auth/session/login` - login
+- `GET /auth/session` - current/list sessions
+- `DELETE /auth/session/:id` - revoke session
+- `PATCH /auth/account` - account update (password/profile auth path)
+
+## MFA (`/auth/mfa`)
+
+- `GET /auth/mfa/ticket`
+- `POST /auth/mfa/ticket`
+- `GET /auth/mfa/recovery`
+- `PUT /auth/mfa/recovery`
+- `POST /auth/mfa/recovery`
+- `GET /auth/mfa/webauthn`
+- `PUT /auth/mfa/webauthn`
+- `DELETE /auth/mfa/webauthn/:credential_id`
+- `GET /auth/mfa/totp`
+- `POST /auth/mfa/totp`
+- `DELETE /auth/mfa/totp`
+
+## Users and Relationships (`/users`)
+
+- `GET /users/@me` - current user
+- `PATCH /users/@me` - update current user
+- `POST /users/@me/presence-token` - create presence API token
+- `DELETE /users/@me/presence-token` - revoke presence API token
+- `PATCH /users/@me/username` - change username
+- `GET /users/servers` - list joined servers
+- `GET /users/dms` - list DM channels
+- `POST /users/friend` - send/accept friend request flow
+- `GET /users/:target` - user public payload
+- `GET /users/:target/dm` - open/create DM
+- `GET /users/:target/profile` - profile payload
+- `PATCH /users/:target/system-badges` - staff/admin badge editing path
+- `GET /users/:target/flags` - user flags
+- `GET /users/:target/mutual` - mutuals
+- `GET /users/:target/default_avatar` - default avatar redirect
+- `PUT /users/:target/friend` - accept friend
+- `DELETE /users/:target/friend` - remove friend
+- `PUT /users/:target/block` - block user
+- `DELETE /users/:target/block` - unblock user
+- `PATCH /users/:target` - privileged user patch route
+
+## Bot Owner API (`/bots`)
+
+- `POST /bots/create` - create bot app/user
+- `GET /bots/marketplace` - discoverable marketplace bots
+- `GET /bots/:target/token` - fetch bot token (owner)
+- `GET /bots/@me` - list owned bots
+- `GET /bots/:bot` - bot details (public/owner rules)
+- `GET /bots/:target/invite` - invite metadata
+- `POST /bots/:target/invite` - invite bot into server/group
+- `PATCH /bots/:target` - edit bot config, slash/context commands, interactions URL, visibility
+- `DELETE /bots/:target` - delete bot
+
+## Bot Runtime Public API (`/bot`)
+
+### Bot identity and gateway
+- `GET /bot/@me`
+- `PATCH /bot/@me`
+- `PATCH /bot/@me/status`
+- `GET /bot/gateway`
+
+### Channel/message operations
+- `GET /bot/channels/:target`
+- `GET /bot/channels/:target/messages`
+- `POST /bot/channels/:target/messages`
+- `PATCH /bot/channels/:target/messages/:msg`
+- `DELETE /bot/channels/:target/messages/:msg`
+- `PUT /bot/channels/:target/messages/:msg/reactions/:emoji`
+- `DELETE /bot/channels/:target/messages/:msg/reactions/:emoji`
+
+### Interaction 2.0
+- `POST /bot/interactions/:id/:token/callback` - callback types `4,5,6,7,9`
+- `POST /bot/interactions/:id/:token/followups` - follow-up message
+- `PATCH /bot/interactions/:id/:token/original` - edit/create deferred original response
+
+### User/server/moderation helpers for bots
+- `GET /bot/users/:target`
+- `GET /bot/servers/:target`
+- `GET /bot/servers/:target/channels`
+- `GET /bot/servers/:target/roles`
+- `GET /bot/servers/:target/permissions`
+- `GET /bot/servers/:target/members`
+- `GET /bot/servers/:target/members/:member`
+- `PATCH /bot/servers/:target/members/:member`
+- `DELETE /bot/servers/:target/members/:member`
+- `GET /bot/servers/:target/bans`
+- `PUT /bot/servers/:target/bans/:user`
+- `DELETE /bot/servers/:target/bans/:user`
+
+## Servers (`/servers`)
+
+### Core server settings
+- `POST /servers/create`
+- `GET /servers/:target`
+- `PATCH /servers/:target`
+- `DELETE /servers/:target`
+- `PUT /servers/:target/ack`
+- `POST /servers/:target/transfer-ownership`
+
+### Automod + calendar/events
+- `GET /servers/:target/automod`
+- `PATCH /servers/:target/automod`
+- `GET /servers/:target/events`
+- `POST /servers/:target/events`
+- `PATCH /servers/:target/events/:event_id`
+- `DELETE /servers/:target/events/:event_id`
+- `PUT /servers/:target/events/:event_id/rsvp`
+
+### Members and roles
+- `GET /servers/:target/members`
+- `GET /servers/:target/members/:member`
+- `PATCH /servers/:target/members/:member`
+- `DELETE /servers/:target/members/:member`
 - `GET /servers/:target/members_experimental_query`
-- `GET /servers/:target/roles/:role_id`, `POST /servers/:target/roles`, `PATCH /servers/:target/roles/:role_id`, `DELETE /servers/:target/roles/:role_id`, `PATCH /servers/:target/roles/ranks`
-- `PUT /servers/:target/permissions/default`, `PUT /servers/:target/permissions/:role_id`
-- `GET /servers/:target/bans`, `PUT /servers/:target/bans/:user`, `DELETE /servers/:target/bans/:user`
-- `GET /servers/:target/invites` – List server invites
+- `GET /servers/:target/roles/:role_id`
+- `POST /servers/:target/roles`
+- `PATCH /servers/:target/roles/:role_id`
+- `DELETE /servers/:target/roles/:role_id`
+- `PATCH /servers/:target/roles/ranks`
+
+### Permissions, bans, invites, emoji, channels, audit
+- `PUT /servers/:target/permissions/default`
+- `PUT /servers/:target/permissions/:role_id`
+- `GET /servers/:target/bans`
+- `PUT /servers/:target/bans/:user`
+- `DELETE /servers/:target/bans/:user`
+- `GET /servers/:target/invites`
 - `GET /servers/:target/emojis`
-- `POST /servers/:target/channels` – Create channel
+- `POST /servers/:target/emojis`
+- `PATCH /servers/:target/emojis/:emojiId`
+- `DELETE /servers/:target/emojis/:emojiId`
+- `POST /servers/:target/channels`
+- `GET /servers/:target/permissions`
+- `GET /servers/:target/audit-log`
+- `POST /servers/:target/webhook/:channelId`
 
-### Invites
-- `GET /invites/:code` – Get invite
-- `POST /invites/:code` – Join invite
-- `DELETE /invites/:target` – Revoke invite
-- `POST /invites` – Create invite (body: channel_id)
+## Channels (`/channels`)
 
-### Customisation
-- `PUT /custom/emoji/:id` – Create emoji
-- `GET /custom/emoji/:emoji_id` – Fetch emoji
-- `DELETE /custom/emoji/:emoji_id` – Delete emoji
+### Channel management
+- `POST /channels/create` - create group
+- `GET /channels/:target`
+- `PATCH /channels/:target`
+- `DELETE /channels/:target`
+- `GET /channels/:target/permissions`
+- `GET /channels/:target/commands` - builtin + bot slash/context command discovery
 
-### Safety
-- `POST /safety/report` – Report content
+### Read state and messages
+- `PUT /channels/:target/ack`
+- `PUT /channels/:target/ack/:message`
+- `GET /channels/:target/messages`
+- `GET /channels/:target/messages/:msg`
+- `GET /channels/:target/messages/:msg/translate`
+- `POST /channels/:target/messages`
+- `PATCH /channels/:target/messages/:msg`
+- `DELETE /channels/:target/messages/:msg`
+- `DELETE /channels/:target/messages/bulk`
 
-### Onboard
-- `GET /onboard/hello` – Onboarding hello
-- `POST /onboard/complete` – Complete onboarding (username)
+### Interaction 2.0 on channel messages
+- `POST /channels/:target/messages/:msg/components/:customId` - button/select interactions
+- `POST /channels/:target/interactions/:id/:token/modal-submit` - modal submit callback
+- `POST /channels/:target/messages/:msg/context/:command` - message context command trigger
+- `POST /channels/:target/users/:user/context/:command` - user context command trigger
 
-### Policy
-- `POST /policy/acknowledge` – Acknowledge policy changes
+### Threads, pins, reactions, search
+- `POST /channels/:target/threads`
+- `GET /channels/:target/threads`
+- `POST /channels/:target/messages/:msg/pin`
+- `DELETE /channels/:target/messages/:msg/pin`
+- `PUT /channels/:target/messages/:msg/reactions/:emoji`
+- `DELETE /channels/:target/messages/:msg/reactions/:emoji`
+- `DELETE /channels/:target/messages/:msg/reactions`
+- `POST /channels/:target/search`
 
-### Sync
-- `POST /sync/settings/fetch` – Fetch settings (body: keys)
-- `POST /sync/settings/set` – Set settings (body: key-value)
-- `GET /sync/unreads` – Unread state
+### Invites, members, recipients, channel perms, webhooks, voice
+- `POST /channels/:target/invites`
+- `GET /channels/:target/members`
+- `PUT /channels/:group/recipients/:member`
+- `DELETE /channels/:target/recipients/:member`
+- `PUT /channels/:target/permissions/default`
+- `PUT /channels/:target/permissions/:role_id`
+- `DELETE /channels/:target/permissions/:role_id`
+- `POST /channels/:target/webhooks`
+- `GET /channels/:target/webhooks`
+- `POST /channels/:target/join_call`
+- `PUT /channels/:target/end_ring/:user`
 
-### Push
-- `POST /push/subscribe` – Web push subscribe
-- `POST /push/unsubscribe` – Unsubscribe
+## Whiteboard (`/whiteboard`)
 
-### Ofeed (global social feed — Opic extension)
-- `GET /ofeed/posts` – List posts (newest first; query: `limit`, `before`). Public; optional session for `liked` on posts.
-- `GET /ofeed/posts/:id` – Single post (share / deep link). Public; optional session.
-- `POST /ofeed/posts` – Create post (`content` max 280) or **repost** (`repost_of` id, optional `content` for quote). Auth required. One repost per user per original (`409` if duplicate).
-- `POST /ofeed/posts/:id/like` – Toggle like. Auth required.
-- `DELETE /ofeed/posts/:id` – Delete own post (decrements original `repost_count` if repost). Auth required.
+- `POST /whiteboard/:sessionId/close` - close active whiteboard session
 
-### Webhooks (channel webhooks)
-- `GET /webhooks/:id` – Fetch (auth)
-- `GET /webhooks/:id/:token` – Fetch with token
-- `POST /webhooks/:id/:token` – Execute (send message)
-- `POST /webhooks/:id/:token/github` – GitHub webhook
-- `PATCH /webhooks/:id`, `PATCH /webhooks/:id/:token` – Edit
-- `DELETE /webhooks/:id`, `DELETE /webhooks/:id/:token` – Delete
+## Invites (`/invites`)
 
-### WebSocket (Bonfire-style gateway)
+- `GET /invites/:code/preview`
+- `GET /invites/:code`
+- `POST /invites/:code`
+- `DELETE /invites/:target`
+- `POST /invites/`
 
-Same HTTP server as REST: `ws://host/?token=<session_token>` (or `x-session-token` header). Bots: `?bot_token=` / `x-bot-token`, optional `intents`.
+## Customisation (`/custom`)
 
-**Client → server**
+- `PUT /custom/emoji/:id`
+- `GET /custom/emoji/:emoji_id`
+- `DELETE /custom/emoji/:emoji_id`
 
-- `Ping` → `Pong`
-- `VoiceJoin` / `VoiceLeave` / `VoiceSignal` – WebRTC voice signaling
-- `TypingStart` / `TypingStop` – typing indicators
+## Safety, Onboarding, Policy
 
-**Server → client (non-exhaustive)**
+- `POST /safety/report`
+- `GET /onboard/hello`
+- `POST /onboard/complete`
+- `POST /policy/acknowledge`
 
-- `Ready` – `users`, `servers`, `channels`, `voiceStates`
-- `MESSAGE_CREATE`, `MESSAGE_UPDATE`, `MESSAGE_DELETE` – fan-out from REST/bot routes (see `routes/channels.js`, `routes/botPublic.js`)
-- `PresenceUpdate` – member online/offline per server
-- `TypingStart` / `TypingStop`
-- `VoiceStateUpdate`, `VoiceReady`, `VoiceSignal`
+## Sync and Push
 
-REST handlers call `broadcastToChannel` / `broadcastToServer` / `broadcastToUser` in `src/events.js`. Multi-instance deployments need sticky sessions or a shared pub/sub layer so every user receives events (see repo `docs/DEPLOYMENT.md`).
+- `POST /sync/settings/fetch`
+- `POST /sync/settings/set`
+- `GET /sync/unreads`
+- `POST /push/subscribe`
+- `POST /push/unsubscribe`
 
----
+## Ofeed (`/ofeed`)
 
-## Not in this port (Rust-only services)
+- `GET /ofeed/posts`
+- `GET /ofeed/posts/:id`
+- `POST /ofeed/posts`
+- `POST /ofeed/posts/:id/like`
+- `DELETE /ofeed/posts/:id`
 
-- **Autumn** – Dedicated media service. This repo has `POST /attachments` (local disk or optional S3) instead.
-- **January** – Proxy service
-- **Gifbox** – Tenor proxy
-- **Crond** – Scheduled tasks (no in-repo scheduler)
-- **Full Stoat/Rust Bonfire parity** – Event shapes aim to match client expectations; edge cases may differ.
+## Channel Webhooks (`/webhooks`)
 
-**Push:** `POST /push/subscribe` stores Web Push subscriptions; delivery uses VAPID when configured (`web-push`). Without `VAPID_*` keys, subscriptions are stored but notifications are not sent.
+- `GET /webhooks/:id`
+- `GET /webhooks/:id/:token`
+- `POST /webhooks/:id/:token`
+- `POST /webhooks/:id/:token/github`
+- `PATCH /webhooks/:id`
+- `PATCH /webhooks/:id/:token`
+- `DELETE /webhooks/:id`
+- `DELETE /webhooks/:id/:token`
 
-All delta REST routes from the Rust backend are implemented. MFA is stubbed for compatibility.
+## Attachments (`/attachments`)
+
+- `POST /attachments/` - upload attachment
+- `GET /attachments/:filename` - serve attachment
+
+## Admin (`/admin`)
+
+- `GET /admin/stats`
+- `POST /admin/login`
+- `POST /admin/logout`
+- `GET /admin/me`
+- `GET /admin/reports`
+- `GET /admin/reports/:id`
+- `DELETE /admin/reports/:id`
+- `GET /admin/badges/public`
+- `GET /admin/badges`
+- `POST /admin/upload`
+- `POST /admin/badges`
+- `PATCH /admin/badges/:id`
+- `DELETE /admin/badges/:id`
+- `GET /admin/users`
+- `GET /admin/claw`
+- `PATCH /admin/claw`
+- `POST /admin/claw/messages`
+- `PATCH /admin/users/:id`
+- `PATCH /admin/users/:id/badges`
+
+## Gateway (WebSocket)
+
+- Connection (user): `ws://host/?token=<session_token>`
+- Connection (bot): `ws://host/?bot_token=<bot_token>&intents=<bitfield>`
+- Typical events:
+  - `Ready`
+  - `MESSAGE_CREATE`, `MESSAGE_UPDATE`, `MESSAGE_DELETE`
+  - `MESSAGE_REACTION_ADD`, `MESSAGE_REACTION_REMOVE`
+  - `INTERACTION_CREATE`
+  - `TypingStart`, `TypingStop`
+  - `VoiceStateUpdate`, `VoiceReady`, `VoiceSignal`
+  - `PresenceUpdate`
+
+## Notes
+
+- Authentication/authorization requirements vary by route (`authMiddleware`, `botAuth`, `adminAuth`).
+- Most route groups are available under both unversioned and `/0.8/*` prefixes.
+- This inventory was generated from current route definitions in `stoat-js/src/routes`.

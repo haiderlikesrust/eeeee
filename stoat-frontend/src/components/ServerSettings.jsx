@@ -185,6 +185,9 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const [editRolePerms, setEditRolePerms] = useState(0);
   const [saving, setSaving] = useState(false);
   const [iconUploading, setIconUploading] = useState(false);
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const [publicSlugDraft, setPublicSlugDraft] = useState('');
+  const [publicRequestLoading, setPublicRequestLoading] = useState(false);
   const [defaultPerms, setDefaultPerms] = useState(() =>
     coerceConsistentServerPermissions(server?.default_permissions ?? DEFAULT_EVERYONE_PERMS),
   );
@@ -195,6 +198,7 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const [newEmojiName, setNewEmojiName] = useState('');
   const [emojiUploading, setEmojiUploading] = useState(false);
   const iconInputRef = useRef(null);
+  const bannerInputRef = useRef(null);
   const emojiInputRef = useRef(null);
   const [wordFilter, setWordFilter] = useState(server?.automod?.blocked_words || server?.word_filter || []);
   const [automod, setAutomod] = useState({
@@ -219,6 +223,7 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
   const [transferSubmitting, setTransferSubmitting] = useState(false);
 
   const getServerIconUrl = () => resolveFileUrl(server?.icon);
+  const getServerBannerUrl = () => resolveFileUrl(server?.banner);
   const getErrMsg = (err, fallback) => err?.error || err?.message || fallback;
 
   const handleIconUpload = async (e) => {
@@ -237,9 +242,57 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
     if (iconInputRef.current) iconInputRef.current.value = '';
   };
 
+  const handleBannerUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBannerUploading(true);
+    try {
+      const uploaded = await uploadFile(file);
+      const updated = await patch(`/servers/${serverId}`, { banner: uploaded });
+      if (onUpdated) onUpdated(updated);
+      toast.success('Server banner updated');
+    } catch (err) {
+      toast.error(getErrMsg(err, 'Failed to update banner'));
+    }
+    setBannerUploading(false);
+    if (bannerInputRef.current) bannerInputRef.current.value = '';
+  };
+
   useEffect(() => {
     if (server?.locked != null) setLocked(server.locked);
   }, [server?.locked]);
+
+  useEffect(() => {
+    setPublicSlugDraft(server?.public_slug_requested || server?.public_slug || '');
+  }, [server?.public_slug_requested, server?.public_slug, serverId]);
+
+  const submitPublicRequest = async () => {
+    const slug = publicSlugDraft.trim().toLowerCase();
+    if (!slug) {
+      toast.error('Enter a URL slug (e.g. gta5)');
+      return;
+    }
+    setPublicRequestLoading(true);
+    try {
+      await post(`/servers/${serverId}/public-request`, { slug });
+      const s = await get(`/servers/${serverId}`);
+      if (onUpdated) onUpdated(s);
+      toast.success('Request submitted for staff review');
+    } catch (err) {
+      toast.error(getErrMsg(err, 'Request failed'));
+    }
+    setPublicRequestLoading(false);
+  };
+
+  const savePublicDiscoveryToggle = async (next) => {
+    try {
+      const updated = await patch(`/servers/${serverId}`, { public_discovery: next });
+      if (onUpdated) onUpdated(updated);
+      toast.success(next ? 'Listed in Discover' : 'Hidden from Discover');
+    } catch (err) {
+      toast.error(getErrMsg(err, 'Failed to update'));
+    }
+  };
 
   useEffect(() => {
     const blockedWords = server?.automod?.blocked_words || server?.word_filter || [];
@@ -701,6 +754,18 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
                 <input type="file" accept="image/*" ref={iconInputRef} style={{ display: 'none' }} onChange={handleIconUpload} />
                 <span className="server-icon-hint">Click to change server icon</span>
               </div>
+              <div className="server-banner-upload">
+                <div
+                  className="server-banner-preview"
+                  onClick={() => bannerInputRef.current?.click()}
+                  style={getServerBannerUrl() ? { backgroundImage: `url(${getServerBannerUrl()})` } : undefined}
+                >
+                  {!getServerBannerUrl() && <span className="server-banner-placeholder">Banner (optional)</span>}
+                  <div className="server-icon-overlay">{bannerUploading ? '…' : 'Edit banner'}</div>
+                </div>
+                <input type="file" accept="image/*" ref={bannerInputRef} style={{ display: 'none' }} onChange={handleBannerUpload} />
+                <span className="server-icon-hint">Wide image shown on invite page and Discover</span>
+              </div>
               <label className="auth-label"><span>SERVER NAME</span><input value={name} onChange={(e) => setName(e.target.value)} /></label>
               <label className="auth-label"><span>DESCRIPTION</span><textarea className="settings-textarea" value={description} onChange={(e) => setDescription(e.target.value)} rows={4} /></label>
               {isOwner && (
@@ -719,6 +784,74 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
                       <div className="perm-toggle-thumb" />
                     </div>
                   </button>
+                </div>
+              )}
+              {isOwner && (
+                <div className="server-public-listing-block">
+                  <h3 className="transfer-ownership-title">Public listing</h3>
+                  <p className="settings-hint transfer-ownership-desc">
+                    Request a short invite link like /invite/your-name and optional listing on Discover. Staff approves requests.
+                  </p>
+                  <p className="server-public-status">
+                    Status:{' '}
+                    <strong>
+                      {server?.public_status === 'approved' && 'Approved'}
+                      {server?.public_status === 'pending' && 'Pending review'}
+                      {server?.public_status === 'rejected' && 'Rejected — you can submit again'}
+                      {(!server?.public_status || server?.public_status === 'none') && 'Not public'}
+                    </strong>
+                  </p>
+                  {server?.public_status === 'approved' && server?.public_slug && (
+                    <>
+                      <label className="auth-label">
+                        <span>Public invite link</span>
+                        <input
+                          readOnly
+                          value={typeof window !== 'undefined' ? `${window.location.origin}/invite/${server.public_slug}` : `/invite/${server.public_slug}`}
+                          onClick={(e) => e.target.select()}
+                        />
+                      </label>
+                      <div className="settings-toggle-row">
+                        <div className="settings-toggle-info">
+                          <span className="settings-toggle-label">Show in Discover</span>
+                          <span className="settings-toggle-desc">Vanity link still works if this is off.</span>
+                        </div>
+                        <button
+                          type="button"
+                          className={`perm-toggle ${server?.public_discovery !== false ? 'on' : 'off'}`}
+                          onClick={() => savePublicDiscoveryToggle(server?.public_discovery === false)}
+                          title={server?.public_discovery === false ? 'Show in Discover' : 'Hide from Discover'}
+                        >
+                          <div className="perm-toggle-track">
+                            <div className="perm-toggle-thumb" />
+                          </div>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {(server?.public_status === 'none' || server?.public_status === 'rejected' || !server?.public_status) && (
+                    <>
+                      <label className="auth-label">
+                        <span>Desired slug (3–32 chars)</span>
+                        <input
+                          value={publicSlugDraft}
+                          onChange={(e) => setPublicSlugDraft(e.target.value)}
+                          placeholder="e.g. gta5"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="modal-btn primary"
+                        disabled={publicRequestLoading}
+                        onClick={submitPublicRequest}
+                      >
+                        {publicRequestLoading ? 'Submitting…' : 'Request public listing'}
+                      </button>
+                    </>
+                  )}
+                  {server?.public_status === 'pending' && (
+                    <p className="settings-hint">Requested slug: <strong>{server?.public_slug_requested || '—'}</strong></p>
+                  )}
                 </div>
               )}
               {isOwner && (

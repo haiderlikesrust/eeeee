@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { ulid } from 'ulid';
 import { User, Account, Session } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { recordServerEvent } from '../analytics/service.js';
 
 const router = Router();
 
@@ -24,10 +25,20 @@ async function handleRegister(req, res) {
       if (process.env.NODE_ENV !== 'production') {
         console.warn('[auth] register missing email/password:', { contentType: req.headers['content-type'], bodyKeys: Object.keys(body), body: Object.keys(body).length ? '[present]' : '[empty]' });
       }
+      void recordServerEvent({
+        userId: null,
+        event: 'auth.register_failure',
+        props: { reason: 'missing_credentials' },
+      });
       return res.status(400).json({ type: 'InvalidCredentials', error: 'Email and password required' });
     }
     const existing = await Account.findOne({ email: email.toLowerCase() });
     if (existing) {
+      void recordServerEvent({
+        userId: null,
+        event: 'auth.register_failure',
+        props: { reason: 'email_in_use' },
+      });
       return res.status(400).json({ type: 'EmailInUse', error: 'Email already registered' });
     }
     const userId = ulid();
@@ -60,6 +71,11 @@ async function handleRegister(req, res) {
       name: 'Session',
     });
     const userObj = user.toObject();
+    void recordServerEvent({
+      userId,
+      event: 'auth.register_success',
+      props: { via: 'email' },
+    });
     res.status(201).json({
       _id: userId,
       user_id: userId,
@@ -90,19 +106,39 @@ router.post('/session/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};
     if (!email || !password) {
+      void recordServerEvent({
+        userId: null,
+        event: 'auth.login_failure',
+        props: { reason: 'missing_credentials' },
+      });
       return res.status(400).json({ type: 'InvalidCredentials', error: 'Email and password required' });
     }
     const account = await Account.findOne({ email: email.toLowerCase() });
     if (!account) {
+      void recordServerEvent({
+        userId: null,
+        event: 'auth.login_failure',
+        props: { reason: 'invalid_credentials' },
+      });
       return res.status(400).json({ type: 'InvalidCredentials', error: 'Invalid credentials' });
     }
     const ok = await bcrypt.compare(password, account.password);
     if (!ok) {
+      void recordServerEvent({
+        userId: null,
+        event: 'auth.login_failure',
+        props: { reason: 'invalid_credentials' },
+      });
       return res.status(400).json({ type: 'InvalidCredentials', error: 'Invalid credentials' });
     }
     const user = await User.findById(account.user_id).lean();
     if (!user) return res.status(500).json({ type: 'InternalError', error: 'User not found' });
     if (user.disabled) {
+      void recordServerEvent({
+        userId: account.user_id,
+        event: 'auth.login_failure',
+        props: { reason: 'account_disabled' },
+      });
       return res.status(403).json({
         type: 'AccountDisabled',
         error: user.disabled_reason?.trim() || 'This account has been disabled.',
@@ -115,6 +151,11 @@ router.post('/session/login', async (req, res) => {
       user_id: account.user_id,
       token,
       name: req.body.friendly_name || 'Session',
+    });
+    void recordServerEvent({
+      userId: account.user_id,
+      event: 'auth.login_success',
+      props: { via: 'email' },
     });
     res.json({
       _id: sessionId,

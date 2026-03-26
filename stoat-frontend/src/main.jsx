@@ -6,6 +6,9 @@ import { ToastProvider } from './context/ToastContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import App from './App';
 import './index.css';
+import { initAnalytics } from './analytics/client';
+
+initAnalytics();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

@@ -20,8 +20,21 @@ import { findBotsWithSlashCommand } from '../slash/resolve.js';
 import { postBotInteraction } from '../slash/botInteraction.js';
 import { getOfficialClawUserId } from '../officialClaw.js';
 import { translateMessageContent } from '../translate.js';
+import { recordServerEvent } from '../analytics/service.js';
 
 const router = Router();
+
+function trackChannelMessageSent(userId, ch, extra = {}) {
+  void recordServerEvent({
+    userId,
+    event: 'channel.message_sent',
+    props: {
+      channel_type: ch.channel_type,
+      has_server: !!ch.server,
+      ...extra,
+    },
+  });
+}
 
 function isBotUser(user) {
   const owner = user?.bot?.owner;
@@ -906,6 +919,7 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
       owner_id: req.userId,
       channel_id: ch._id,
     };
+    trackChannelMessageSent(req.userId, ch, { flow: 'whiteboard_slash' });
     res.status(201).json(payload);
     void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
       eventIntent: GatewayIntents.GUILD_MESSAGES,
@@ -975,6 +989,7 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
       const authorMap = { [req.userId]: author };
       const replyContext = await fetchReplyContext(replyIds, authorMap);
       const payload = messageToJson(msg, authorMap, replyContext);
+      trackChannelMessageSent(req.userId, ch, { flow: 'builtin_slash' });
       res.status(201).json(payload);
       void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
         eventIntent: GatewayIntents.GUILD_MESSAGES,
@@ -1106,6 +1121,7 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
           }
         }
 
+        trackChannelMessageSent(req.userId, ch, { flow: 'bot_slash' });
         res.status(201).json(payload);
         void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
           eventIntent: GatewayIntents.GUILD_MESSAGES,
@@ -1149,6 +1165,7 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
   const authorMap = { [req.userId]: author };
   const replyContext = await fetchReplyContext(replyIds, authorMap);
   const payload = messageToJson(msg, authorMap, replyContext);
+  trackChannelMessageSent(req.userId, ch, { flow: 'default' });
   res.status(201).json(payload);
   void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: payload }, {
     eventIntent: GatewayIntents.GUILD_MESSAGES,

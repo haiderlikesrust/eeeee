@@ -45,4 +45,20 @@ export default {
    */
   translateProviderUrl: process.env.TRANSLATE_PROVIDER_URL || '',
   translateProviderApiKey: process.env.TRANSLATE_PROVIDER_API_KEY || '',
+
+  /** First-party product analytics (MongoDB + POST /analytics/batch). Set ANALYTICS_ENABLED=false to no-op ingest. */
+  analyticsEnabled: process.env.ANALYTICS_ENABLED !== 'false',
+  /** TTL for analytics documents (MongoDB expireAfterSeconds on received_at). Default 90 days. */
+  analyticsTtlSeconds: Math.max(
+    86400,
+    parseInt(process.env.ANALYTICS_TTL_SECONDS || String(90 * 24 * 60 * 60), 10) || 90 * 24 * 60 * 60,
+  ),
+  analyticsMaxBatch: Math.min(
+    100,
+    Math.max(1, parseInt(process.env.ANALYTICS_MAX_BATCH || '50', 10) || 50),
+  ),
+  analyticsMaxPropsBytes: Math.min(
+    16384,
+    Math.max(512, parseInt(process.env.ANALYTICS_MAX_PROPS_BYTES || '8192', 10) || 8192),
+  ),
 };

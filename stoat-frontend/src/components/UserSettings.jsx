@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { get, patch, del, uploadFile } from '../api';
+import { get, patch, post, del, uploadFile } from '../api';
+import {
+  setLocalAnalyticsOptOut,
+  setServerAnalyticsOptOut,
+} from '../analytics/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
@@ -62,6 +66,7 @@ export default function UserSettings({ onClose }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [hideServerOwnerCrown, setHideServerOwnerCrown] = useState(!!user?.profile?.hide_server_owner_crown);
+  const [analyticsOptOut, setAnalyticsOptOut] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -120,6 +125,21 @@ export default function UserSettings({ onClose }) {
   useEffect(() => {
     setHideServerOwnerCrown(!!user?.profile?.hide_server_owner_crown);
   }, [user?.profile?.hide_server_owner_crown]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await post('/sync/settings/fetch', { keys: ['analytics_opt_out'] });
+        if (cancelled) return;
+        const raw = s?.analytics_opt_out;
+        setAnalyticsOptOut(raw === '1' || raw === 'true' || String(raw || '').toLowerCase() === 'yes');
+      } catch {
+        if (!cancelled) setAnalyticsOptOut(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?._id]);
 
   const loadSessions = async () => {
     try {
@@ -305,6 +325,35 @@ export default function UserSettings({ onClose }) {
                   <strong>Hide server owner crown</strong>
                   <span className="settings-hint">
                     When you own a server, the gold crown won&apos;t appear on your avatar for other members (member list, chat, voice sidebar, etc.). Save profile to apply.
+                  </span>
+                </label>
+              </div>
+
+              <div className="user-settings-privacy-toggle">
+                <input
+                  id="analytics-opt-out"
+                  type="checkbox"
+                  checked={analyticsOptOut}
+                  onChange={async (e) => {
+                    const next = e.target.checked;
+                    setAnalyticsOptOut(next);
+                    setLocalAnalyticsOptOut(next);
+                    setServerAnalyticsOptOut(next);
+                    try {
+                      await post('/sync/settings/set', { analytics_opt_out: next ? '1' : '' });
+                      toast.success(next ? 'Product analytics disabled' : 'Product analytics enabled');
+                    } catch (err) {
+                      setAnalyticsOptOut(!next);
+                      setLocalAnalyticsOptOut(!next);
+                      setServerAnalyticsOptOut(!next);
+                      toast.error(getErrMsg(err, 'Could not update preference'));
+                    }
+                  }}
+                />
+                <label htmlFor="analytics-opt-out" className="user-settings-privacy-toggle-text">
+                  <strong>Opt out of product analytics</strong>
+                  <span className="settings-hint">
+                    When enabled, usage events are not stored for your account (first-party analytics only; no third-party trackers).
                   </span>
                 </label>
               </div>

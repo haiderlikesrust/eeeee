@@ -853,3 +853,22 @@
 .admin-disable-reason-save {
   font-size: 12px;
 }
+
+.admin-inline-input {
+  min-width: 120px;
+  max-width: 200px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.admin-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}

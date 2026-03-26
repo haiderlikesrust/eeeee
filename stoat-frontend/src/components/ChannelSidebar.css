@@ -57,6 +57,24 @@
   letter-spacing: -0.01em;
 }
 
+/* Discord-style wide server banner: 3:1 (width : height), between title row and channel list */
+.server-sidebar-banner {
+  flex-shrink: 0;
+  width: 100%;
+  aspect-ratio: 3 / 1;
+  overflow: hidden;
+  background: var(--bg-primary, #111);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.server-sidebar-banner-crop {
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
 .sidebar-channels {
   flex: 1;
   overflow-y: auto;
@@ -635,6 +653,71 @@
   opacity: 0.7;
   display: flex;
   align-items: center;
+}
+
+/*
+ * Create Channel modal: Auth.css is not loaded in AppLayout, so <label> stays display:inline
+ * and fields overlap. Scope full block layout + theme inputs here (same tokens as ServerBar modal).
+ */
+.create-channel-modal h2 {
+  margin-bottom: 20px;
+}
+
+.create-channel-modal .channel-type-selector {
+  margin-bottom: 20px;
+}
+
+.create-channel-modal .auth-label {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  margin: 0 0 16px;
+  text-align: left;
+}
+
+.create-channel-modal .auth-label span {
+  display: block;
+  flex-shrink: 0;
+  color: var(--header-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+.create-channel-modal .auth-label input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  font-size: 15px;
+  line-height: 1.4;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.create-channel-modal .auth-label input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.create-channel-modal .auth-label input:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.create-channel-modal .auth-label input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
+.create-channel-modal .modal-actions {
+  margin-top: 4px;
 }
 
 /* ── Server channel list loading skeleton ── */

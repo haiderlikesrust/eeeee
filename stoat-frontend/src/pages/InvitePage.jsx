@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { get, post } from '../api';
 import { useToast } from '../context/ToastContext';
+import { resolveFileUrl } from '../utils/avatarUrl';
 import './InvitePage.css';
 
 export default function InvitePage() {
@@ -82,10 +83,28 @@ export default function InvitePage() {
 
   const serverName = preview.server.name;
   const isLocked = preview.server.locked;
+  const bannerUrl = resolveFileUrl(preview.server.banner);
+  const iconUrl = resolveFileUrl(preview.server.icon);
+  const hasHero = Boolean(bannerUrl || iconUrl);
 
   return (
-    <div className="invite-page">
-      <div className="invite-card">
+    <div className={`invite-page ${hasHero ? 'invite-page--hero' : ''}`}>
+      <div className={`invite-card ${hasHero ? 'invite-card--hero' : ''}`}>
+        {hasHero && (
+          <div
+            className="invite-card-hero"
+            style={bannerUrl ? { backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.2) 0%, var(--bg-secondary) 100%), url(${bannerUrl})` } : undefined}
+          >
+            <div className="invite-card-hero-icon">
+              {iconUrl ? (
+                <img src={iconUrl} alt="" />
+              ) : (
+                <span aria-hidden="true">{serverName.slice(0, 2).toUpperCase()}</span>
+              )}
+            </div>
+          </div>
+        )}
+        <div className="invite-card-inner">
         <h1 className="invite-title">You've been invited to join</h1>
         <p className="invite-server-name">{serverName}</p>
 
@@ -118,6 +137,7 @@ export default function InvitePage() {
         {user && !isLocked && (
           <Link to="/channels/@me" className="invite-back">Back to app</Link>
         )}
+        </div>
       </div>
     </div>
   );

@@ -318,6 +318,19 @@ function ChannelSidebar({
         </>
       )}
 
+      {(() => {
+        const bannerUrl = resolveFileUrl(server?.banner);
+        if (!bannerUrl) return null;
+        return (
+          <div className="server-sidebar-banner" role="img" aria-label={`${server?.name || 'Server'} banner`}>
+            <div
+              className="server-sidebar-banner-crop"
+              style={{ backgroundImage: `url(${bannerUrl})` }}
+            />
+          </div>
+        );
+      })()}
+
       <div className="sidebar-channels">
         {(() => {
           const textChannels = (channels || []).filter((ch) => ch.channel_type !== 'VoiceChannel' && ch.channel_type !== 'Thread');
@@ -417,7 +430,7 @@ function ChannelSidebar({
 
       {showCreateChannel && (
         <div className="modal-overlay" onClick={() => setShowCreateChannel(false)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-box create-channel-modal" onClick={(e) => e.stopPropagation()}>
             <h2>Create Channel</h2>
             <div className="channel-type-selector">
               <span className="auth-label-text">CHANNEL TYPE</span>

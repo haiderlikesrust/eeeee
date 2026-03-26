@@ -26,6 +26,7 @@ import {
 } from '../officialClaw.js';
 import { postOfficialClawChannelMessage } from '../clawMessaging.js';
 import { OPIC_STAFF_BADGE_ID } from '../opicStaffBadge.js';
+import { validatePublicSlug, isPublicSlugTaken } from '../publicServer.js';
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@admin.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
@@ -551,6 +552,63 @@ router.patch('/users/:id/badges', adminAuth, async (req, res) => {
     discriminator: user.discriminator,
     system_badges: user.system_badges || [],
   });
+});
+
+// GET /admin/public-servers/pending
+router.get('/public-servers/pending', adminAuth, async (req, res) => {
+  const list = await Server.find({ public_status: 'pending' })
+    .select('_id name owner public_slug_requested public_requested_at')
+    .sort({ public_requested_at: -1 })
+    .lean();
+  const ownerIds = [...new Set(list.map((s) => s.owner).filter(Boolean))];
+  const owners = await User.find({ _id: { $in: ownerIds } }).select('username discriminator').lean();
+  const ownerMap = Object.fromEntries((owners || []).map((o) => [o._id, o]));
+  res.json({
+    servers: list.map((s) => ({
+      ...s,
+      owner_user: ownerMap[s.owner]
+        ? { username: ownerMap[s.owner].username, discriminator: ownerMap[s.owner].discriminator }
+        : null,
+    })),
+  });
+});
+
+// POST /admin/public-servers/:serverId/approve
+router.post('/public-servers/:serverId/approve', adminAuth, async (req, res) => {
+  const server = await Server.findById(req.params.serverId);
+  if (!server) return res.status(404).json({ type: 'NotFound', error: 'Server not found' });
+  if (server.public_status !== 'pending') {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Server is not pending approval' });
+  }
+  const bodySlug = req.body?.slug != null ? validatePublicSlug(req.body.slug) : null;
+  const fallback = server.public_slug_requested ? validatePublicSlug(server.public_slug_requested) : null;
+  const v = bodySlug?.ok ? bodySlug : fallback;
+  if (!v?.ok) {
+    return res.status(400).json({ type: 'InvalidPayload', error: v?.error || 'Valid slug required' });
+  }
+  if (await isPublicSlugTaken(v.slug, server._id)) {
+    return res.status(400).json({ type: 'SlugTaken', error: 'Slug is already in use' });
+  }
+  server.public_status = 'approved';
+  server.public_slug = v.slug;
+  server.public_slug_requested = v.slug;
+  if (req.body?.public_discovery === false) server.public_discovery = false;
+  else server.public_discovery = true;
+  await server.save();
+  res.json(server.toObject());
+});
+
+// POST /admin/public-servers/:serverId/reject
+router.post('/public-servers/:serverId/reject', adminAuth, async (req, res) => {
+  const server = await Server.findById(req.params.serverId);
+  if (!server) return res.status(404).json({ type: 'NotFound', error: 'Server not found' });
+  if (server.public_status !== 'pending') {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Server is not pending approval' });
+  }
+  server.public_status = 'rejected';
+  server.public_slug_requested = null;
+  await server.save();
+  res.status(204).send();
 });
 
 export default router;

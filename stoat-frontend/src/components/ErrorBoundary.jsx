@@ -1,4 +1,5 @@
 import React from 'react';
+import { track } from '../analytics/client';
 
 /**
  * Catches uncaught errors in the tree and shows a fallback UI instead of a blank screen.
@@ -18,6 +19,8 @@ export default class ErrorBoundary extends React.Component {
     if (typeof window !== 'undefined' && window.console) {
       console.error('ErrorBoundary caught:', error, errorInfo);
     }
+    const msg = error?.message != null ? String(error.message).slice(0, 200) : 'unknown';
+    track('client.error', { message: msg });
   }
 
   handleRetry = () => {

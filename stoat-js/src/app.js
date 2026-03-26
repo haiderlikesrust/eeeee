@@ -25,6 +25,7 @@ import admin from './routes/admin.js';
 import botPublic from './routes/botPublic.js';
 import ofeed from './routes/ofeed.js';
 import publicPresence from './routes/publicPresence.js';
+import analytics from './routes/analytics.js';
 
 const app = express();
 
@@ -91,6 +92,7 @@ app.use('/attachments', uploads);
 app.use('/admin', ratelimit({ max: 60 }), admin);
 app.use('/bot', ratelimit({ max: 180 }), botPublic);
 app.use('/ofeed', ratelimit({ max: 60 }), ofeed);
+app.use('/analytics', analytics);
 
 // Optional 0.8 prefix (Stoat API version)
 app.use('/0.8', root);
@@ -113,6 +115,7 @@ app.use('/0.8/webhooks', webhooks);
 app.use('/0.8/admin', ratelimit({ max: 60 }), admin);
 app.use('/0.8/bot', ratelimit({ max: 180 }), botPublic);
 app.use('/0.8/ofeed', ratelimit({ max: 60 }), ofeed);
+app.use('/0.8/analytics', analytics);
 
 app.use((err, req, res, next) => {
   logger.error({ err, msg: 'Unhandled error', path: req.path, method: req.method });

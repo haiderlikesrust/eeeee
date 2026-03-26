@@ -96,6 +96,10 @@ export default function AdminPage() {
   const [reportDetailById, setReportDetailById] = useState({});
   const [expandedReportId, setExpandedReportId] = useState(null);
 
+  const [publicServersPending, setPublicServersPending] = useState([]);
+  const [loadingPublicServers, setLoadingPublicServers] = useState(false);
+  const [publicApproveSlugDraft, setPublicApproveSlugDraft] = useState({});
+
   const activeBadges = useMemo(() => badges.filter((b) => b.active), [badges]);
 
   const tabs = useMemo(
@@ -106,6 +110,7 @@ export default function AdminPage() {
       { id: 'staff', label: 'Staff' },
       { id: 'users', label: 'Users' },
       { id: 'moderation', label: 'Moderation' },
+      { id: 'public-servers', label: 'Public servers' },
     ],
     [],
   );
@@ -161,6 +166,11 @@ export default function AdminPage() {
   useEffect(() => {
     if (!token || !me || activeTab !== 'moderation') return;
     loadReportList();
+  }, [activeTab, token, me]);
+
+  useEffect(() => {
+    if (!token || !me || activeTab !== 'public-servers') return;
+    loadPublicServers();
   }, [activeTab, token, me]);
 
   useEffect(() => {
@@ -296,6 +306,53 @@ export default function AdminPage() {
     setLoadingReports(false);
   }
 
+  async function loadPublicServers() {
+    setLoadingPublicServers(true);
+    try {
+      const data = await adminFetch('/public-servers/pending', { token });
+      setPublicServersPending(Array.isArray(data?.servers) ? data.servers : []);
+    } catch (err) {
+      toast.error(err?.error || 'Failed to load public server queue');
+      setPublicServersPending([]);
+    }
+    setLoadingPublicServers(false);
+  }
+
+  async function approvePublicServer(serverId) {
+    const slug = (publicApproveSlugDraft[serverId] || '').trim();
+    try {
+      await adminFetch(`/public-servers/${serverId}/approve`, {
+        method: 'POST',
+        token,
+        body: slug ? { slug } : {},
+      });
+      toast.success('Public listing approved');
+      setPublicApproveSlugDraft((prev) => {
+        const next = { ...prev };
+        delete next[serverId];
+        return next;
+      });
+      await loadPublicServers();
+    } catch (err) {
+      toast.error(err?.error || 'Approve failed');
+    }
+  }
+
+  async function rejectPublicServer(serverId) {
+    try {
+      await adminFetch(`/public-servers/${serverId}/reject`, { method: 'POST', token });
+      toast.success('Request rejected');
+      setPublicApproveSlugDraft((prev) => {
+        const next = { ...prev };
+        delete next[serverId];
+        return next;
+      });
+      await loadPublicServers();
+    } catch (err) {
+      toast.error(err?.error || 'Reject failed');
+    }
+  }
+
   async function toggleReportDetail(reportId) {
     if (expandedReportId === reportId) {
       setExpandedReportId(null);
@@ -410,6 +467,8 @@ export default function AdminPage() {
     setReportTotal(0);
     setReportDetailById({});
     setExpandedReportId(null);
+    setPublicServersPending([]);
+    setPublicApproveSlugDraft({});
   };
 
   const uploadBadgeIcon = async (file) => {
@@ -1123,6 +1182,87 @@ export default function AdminPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+      </section>
+      )}
+
+      {activeTab === 'public-servers' && (
+      <section className="admin-section admin-public-servers">
+        <div className="admin-moderation-head">
+          <h2>Public server listings</h2>
+          <button
+            type="button"
+            onClick={() => loadPublicServers()}
+            disabled={loadingPublicServers}
+            className="admin-link-btn"
+          >
+            {loadingPublicServers ? 'Loading…' : 'Refresh'}
+          </button>
+        </div>
+        <p className="admin-section-intro">
+          Approve or reject owner requests for vanity invite URLs and optional discovery listing.
+        </p>
+        {loadingPublicServers && publicServersPending.length === 0 ? (
+          <p className="admin-stats-loading">Loading queue…</p>
+        ) : publicServersPending.length === 0 ? (
+          <p className="admin-empty">No pending public listing requests.</p>
+        ) : (
+          <div className="admin-mini-table-wrap">
+            <table className="admin-mini-table">
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>Owner</th>
+                  <th>Requested slug</th>
+                  <th>Requested</th>
+                  <th>Override slug</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {publicServersPending.map((s) => {
+                  const sid = s._id;
+                  return (
+                    <tr key={sid}>
+                      <td>
+                        <div>{s.name || '—'}</div>
+                        <code className="admin-id-sub">{sid}</code>
+                      </td>
+                      <td>
+                        {s.owner_user ? (
+                          <>
+                            <div>{s.owner_user.username}#{s.owner_user.discriminator}</div>
+                            <code className="admin-id-sub">{s.owner}</code>
+                          </>
+                        ) : (
+                          <code className="admin-id-sub">{s.owner}</code>
+                        )}
+                      </td>
+                      <td><code>{s.public_slug_requested || '—'}</code></td>
+                      <td>{s.public_requested_at ? new Date(s.public_requested_at).toLocaleString() : '—'}</td>
+                      <td>
+                        <input
+                          type="text"
+                          className="admin-inline-input"
+                          placeholder="Optional"
+                          value={publicApproveSlugDraft[sid] || ''}
+                          onChange={(e) => setPublicApproveSlugDraft((prev) => ({ ...prev, [sid]: e.target.value }))}
+                        />
+                      </td>
+                      <td className="admin-table-actions">
+                        <button type="button" className="admin-link-btn" onClick={() => approvePublicServer(sid)}>
+                          Approve
+                        </button>
+                        <button type="button" className="admin-danger-btn" onClick={() => rejectPublicServer(sid)}>
+                          Reject
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

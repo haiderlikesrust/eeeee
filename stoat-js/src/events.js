@@ -16,6 +16,15 @@ import {
   removeUserFromAllRooms,
   clearRoomOps,
 } from './whiteboardRooms.js';
+import { recordServerEvent } from './analytics/service.js';
+import {
+  queryDiscoverServers,
+  allowDiscoverWsRate,
+  allowJoinPublicWsRate,
+  resolveInviteOrPublicSlug,
+  normalizePublicSlug,
+} from './publicServer.js';
+import { joinUserToServerForPublicInvite } from './serverJoinPublic.js';
 
 /** Per user per session: max WhiteboardOp relayed per 1s window (strokes etc.). */
 const WB_OP_RATE_WINDOW_MS = 1000;
@@ -202,6 +211,13 @@ export function createEventServer(server) {
 
     ws.send(JSON.stringify({ type: 'Ready', data: { users: [user], servers, channels, voiceStates: voiceStatesData } }));
 
+    void recordServerEvent({
+      userId,
+      event: 'ws.connect',
+      props: { client_kind: kind },
+      platform: 'gateway',
+    });
+
     // Notify all servers this user/bot is in so member lists show online immediately
     for (const sid of serverIds) {
       broadcastToServer(sid, {
@@ -220,6 +236,56 @@ export function createEventServer(server) {
           case 'Ping':
             ws.send(JSON.stringify({ type: 'Pong', data: msg.data }));
             break;
+
+          case 'DiscoverServersRequest': {
+            if (kind !== 'user') break;
+            if (!allowDiscoverWsRate(userId)) {
+              ws.send(JSON.stringify({ type: 'DiscoverServersError', d: { code: 'rate_limited' } }));
+              break;
+            }
+            const dIn = msg.d ?? msg.data ?? {};
+            const discData = await queryDiscoverServers({
+              limit: dIn.limit,
+              before: dIn.before,
+            });
+            ws.send(JSON.stringify({ type: 'DiscoverServers', d: discData }));
+            break;
+          }
+
+          case 'JoinPublicServerRequest': {
+            if (kind !== 'user') break;
+            if (!allowJoinPublicWsRate(userId)) {
+              ws.send(JSON.stringify({ type: 'JoinPublicServerError', d: { code: 'rate_limited' } }));
+              break;
+            }
+            const jIn = msg.d ?? msg.data ?? {};
+            const slug = normalizePublicSlug(jIn.slug);
+            if (!slug) {
+              ws.send(JSON.stringify({ type: 'JoinPublicServerError', d: { code: 'invalid_slug', error: 'Slug required' } }));
+              break;
+            }
+            const resolved = await resolveInviteOrPublicSlug(slug);
+            if (!resolved || resolved.kind !== 'public_server') {
+              ws.send(JSON.stringify({ type: 'JoinPublicServerError', d: { code: 'not_found', error: 'Unknown public server' } }));
+              break;
+            }
+            const jResult = await joinUserToServerForPublicInvite(userId, resolved.server);
+            if (!jResult.ok) {
+              ws.send(JSON.stringify({
+                type: 'JoinPublicServerError',
+                d: { code: jResult.type, error: jResult.error },
+              }));
+              break;
+            }
+            ws.send(JSON.stringify({
+              type: 'JoinPublicServer',
+              d: {
+                serverId: String(resolved.server._id),
+                channelId: String(jResult.channel._id),
+              },
+            }));
+            break;
+          }
 
           case 'VoiceJoin': {
             const channelId = msg.channelId;
@@ -251,6 +317,14 @@ export function createEventServer(server) {
               type: 'VoiceReady',
               data: { channelId, members: existingMembers, userId },
             }));
+            if (kind === 'user') {
+              void recordServerEvent({
+                userId,
+                event: 'voice.join',
+                props: { channel_id: String(channelId) },
+                platform: 'gateway',
+              });
+            }
             break;
           }
 
@@ -433,6 +507,12 @@ export function createEventServer(server) {
 
     ws.on('close', async () => {
       const entry = clients.get(key);
+      void recordServerEvent({
+        userId,
+        event: 'ws.disconnect',
+        props: { client_kind: entry?.kind ?? kind },
+        platform: 'gateway',
+      });
       await removeClientAndNotifyServers(key, userId, entry?.serverIds, entry?.userId ?? userId);
     });
   });
@@ -458,8 +538,17 @@ export function createEventServer(server) {
 }
 
 function leaveAllVoice(userId, key) {
+  const voiceClientKind = clients.get(key)?.kind;
   for (const [channelId, state] of voiceStates.entries()) {
     if (state.has(userId)) {
+      if (voiceClientKind === 'user') {
+        void recordServerEvent({
+          userId,
+          event: 'voice.leave',
+          props: { channel_id: String(channelId) },
+          platform: 'gateway',
+        });
+      }
       state.delete(userId);
       const members = getVoiceMembers(channelId);
       const evt = {

@@ -61,6 +61,24 @@ const serverSchema = new mongoose.Schema({
   word_filter: { type: [String], default: [] },
   automod: { type: automodSchema, default: () => ({}) },
   events: { type: [serverEventSchema], default: [] },
+  /** none | pending | approved | rejected */
+  public_status: {
+    type: String,
+    enum: ['none', 'pending', 'approved', 'rejected'],
+    default: 'none',
+  },
+  /** Set when approved; used for /invite/:slug */
+  public_slug: { type: String, default: null },
+  /** Owner/admin request while pending */
+  public_slug_requested: { type: String, default: null },
+  /** When approved: list on GET discover / WS (owner may turn off) */
+  public_discovery: { type: Boolean, default: true },
+  public_requested_at: { type: Date, default: null },
 }, { id: false });
+
+serverSchema.index(
+  { public_slug: 1 },
+  { unique: true, sparse: true, partialFilterExpression: { public_slug: { $type: 'string', $ne: '' } } },
+);
 
 export default mongoose.model('Server', serverSchema);

@@ -2,6 +2,12 @@ import { Router } from 'express';
 import { ulid } from 'ulid';
 import { Server, Channel, Member, User, Invite, ServerBan, Emoji, AuditLog, Message } from '../db/models/index.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { ratelimit } from '../middleware/ratelimit.js';
+import {
+  validatePublicSlug,
+  isPublicSlugTaken,
+  queryDiscoverServers,
+} from '../publicServer.js';
 import {
   Permissions, DEFAULT_EVERYONE_PERMS, ALL_PERMISSIONS,
   computeServerPermissions, hasPermission, outranks, canManageRole, sameId,
@@ -117,6 +123,43 @@ router.post('/create', authMiddleware(), async (req, res) => {
     server: { ...server, channels: server.channels.map((id) => (id === channelId ? { ...channel } : id)) },
     channels: [channel],
   });
+});
+
+// GET /servers/discover — public directory (HTTP fallback; WS preferred in-app)
+router.get('/discover', ratelimit({ max: 40 }), async (req, res) => {
+  const limit = req.query.limit;
+  const before = req.query.before;
+  const data = await queryDiscoverServers({
+    limit: limit != null ? Number(limit) : undefined,
+    before: before != null ? String(before) : undefined,
+  });
+  res.json(data);
+});
+
+// POST /servers/:target/public-request — owner requests public listing + vanity slug
+router.post('/:target/public-request', authMiddleware(), async (req, res) => {
+  const server = await Server.findById(req.params.target);
+  if (!server) return res.status(404).json({ type: 'NotFound', error: 'Server not found' });
+  if (!sameId(server.owner, req.userId)) {
+    return res.status(403).json({ type: 'Forbidden', error: 'Only the server owner can request public listing' });
+  }
+  if (server.public_status === 'approved') {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Server is already public' });
+  }
+  if (server.public_status === 'pending') {
+    return res.status(400).json({ type: 'AlreadyPending', error: 'A public listing request is already pending review' });
+  }
+  const { slug } = req.body || {};
+  const v = validatePublicSlug(slug);
+  if (!v.ok) return res.status(400).json({ type: 'InvalidPayload', error: v.error });
+  if (await isPublicSlugTaken(v.slug, server._id)) {
+    return res.status(400).json({ type: 'SlugTaken', error: 'This slug is taken or already requested' });
+  }
+  server.public_status = 'pending';
+  server.public_slug_requested = v.slug;
+  server.public_requested_at = new Date();
+  await server.save();
+  res.status(204).send();
 });
 
 // GET /servers/:target
@@ -308,7 +351,7 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
     return res.status(403).json({ type: 'Forbidden', error: 'Missing MANAGE_SERVER permission' });
   }
   const {
-    name, description, icon, banner, default_permissions, locked, word_filter, automod,
+    name, description, icon, banner, default_permissions, locked, word_filter, automod, public_discovery,
   } = req.body || {};
   if (name != null) ctx.server.name = String(name).slice(0, 32);
   if (description != null) ctx.server.description = description;
@@ -331,6 +374,9 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
     ctx.server.automod = next;
     ctx.server.word_filter = next.blocked_words;
     ctx.server.markModified('automod');
+  }
+  if (public_discovery != null && sameId(ctx.server.owner, req.userId) && ctx.server.public_status === 'approved') {
+    ctx.server.public_discovery = !!public_discovery;
   }
   await ctx.server.save();
   res.json(ctx.server.toObject());

@@ -7,6 +7,7 @@ import { UnreadProvider } from './context/UnreadContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { OfeedProvider } from './context/OfeedContext';
 import PageLoadingFallback from './components/PageLoadingFallback';
+import AnalyticsRouteListener from './analytics/RouteListener';
 
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
@@ -30,6 +31,7 @@ export default function App() {
   if (!user) {
     return (
       <Suspense fallback={fallback}>
+        <AnalyticsRouteListener />
         <Routes>
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/invite/:code" element={<InvitePage />} />
@@ -51,6 +53,7 @@ export default function App() {
           <NotificationProvider>
             <OfeedProvider>
             <Suspense fallback={fallback}>
+              <AnalyticsRouteListener />
               <Routes>
                 <Route path="/admin" element={<AdminPage />} />
                 <Route path="/invite/:code" element={<InvitePage />} />

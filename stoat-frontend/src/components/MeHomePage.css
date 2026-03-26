@@ -59,7 +59,7 @@
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 640px;
+  max-width: 960px;
 }
 
 .me-home-mobile-bar .mobile-drawer-btn {
@@ -201,6 +201,148 @@
 .me-home-name {
   color: var(--header-primary);
   font-weight: 700;
+}
+
+/* ── Discover ── */
+.me-home-discover {
+  margin-bottom: 36px;
+}
+
+.me-home-discover-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--header-primary);
+  margin: 0 0 6px;
+  letter-spacing: -0.02em;
+}
+
+.me-home-discover-sub {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0 0 16px;
+}
+
+.me-home-discover-loading,
+.me-home-discover-empty {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.me-home-discover-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.me-home-discover-card {
+  position: relative;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--input-border);
+  background: var(--bg-floating);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.me-home-discover-card-banner {
+  height: 88px;
+  background: linear-gradient(135deg, var(--accent-muted), rgba(99, 102, 241, 0.15));
+  background-size: cover;
+  background-position: center;
+}
+
+.me-home-discover-card-body {
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  gap: 12px;
+  align-items: start;
+  padding: 14px 14px 16px;
+}
+
+.me-home-discover-card-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  background: var(--bg-modifier-hover);
+  border: 1px solid var(--input-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--header-primary);
+  overflow: hidden;
+  margin-top: -28px;
+  position: relative;
+  z-index: 1;
+}
+
+.me-home-discover-card-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.me-home-discover-card-text {
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.me-home-discover-card-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--header-primary);
+  margin: 0 0 4px;
+  line-height: 1.25;
+}
+
+.me-home-discover-card-desc {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  margin: 0 0 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.me-home-discover-card-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.me-home-discover-join {
+  align-self: center;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.me-home-discover-join:hover {
+  background: var(--accent-hover, #2d8d4a);
+}
+
+.me-home-discover-join:active {
+  transform: scale(0.98);
+}
+
+@media (max-width: 400px) {
+  .me-home-discover-card-body {
+    grid-template-columns: 40px 1fr;
+    grid-template-rows: auto auto;
+  }
+
+  .me-home-discover-join {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
 }
 
 /* ── Feature cards ── */

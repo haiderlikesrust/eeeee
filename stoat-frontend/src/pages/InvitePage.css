@@ -7,6 +7,18 @@
   padding: 24px;
 }
 
+.invite-page--hero {
+  align-items: flex-start;
+  padding-top: 48px;
+}
+
+@media (min-height: 720px) {
+  .invite-page--hero {
+    align-items: center;
+    padding-top: 24px;
+  }
+}
+
 .invite-card {
   width: 100%;
   max-width: 420px;
@@ -15,6 +27,50 @@
   padding: 32px;
   border: 1px solid var(--border);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.invite-card--hero {
+  padding: 0;
+  overflow: hidden;
+  max-width: 440px;
+}
+
+.invite-card-hero {
+  position: relative;
+  min-height: 140px;
+  background: linear-gradient(145deg, #1e293b 0%, #0f172a 50%, #111827 100%);
+  background-size: cover;
+  background-position: center;
+}
+
+.invite-card-hero-icon {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translate(-50%, 50%);
+  width: 88px;
+  height: 88px;
+  border-radius: 20px;
+  background: var(--bg-secondary);
+  border: 4px solid var(--bg-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--header-primary);
+}
+
+.invite-card-hero-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.invite-card-inner {
+  padding: 56px 32px 32px;
 }
 
 .invite-card-error .invite-title {

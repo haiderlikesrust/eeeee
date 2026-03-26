@@ -19,3 +19,4 @@ export { default as AuditLog } from './AuditLog.js';
 export { default as OfeedPost } from './OfeedPost.js';
 export { default as WhiteboardSession } from './WhiteboardSession.js';
 export { default as Interaction } from './Interaction.js';
+export { default as AnalyticsEvent } from './AnalyticsEvent.js';
