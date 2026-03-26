@@ -1,3 +1,5 @@
+import { apiUrl } from '../api';
+
 let badgeMapCache = null;
 let badgePromise = null;
 
@@ -22,7 +24,7 @@ function normalizeList(data) {
 export async function loadSystemBadgeMap() {
   if (badgeMapCache) return badgeMapCache;
   if (badgePromise) return badgePromise;
-  badgePromise = fetch('/api/admin/badges/public')
+  badgePromise = fetch(apiUrl('/admin/badges/public'))
     .then((res) => (res.ok ? res.json() : []))
     .then((data) => {
       badgeMapCache = normalizeList(data);

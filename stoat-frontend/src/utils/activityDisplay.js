@@ -2,6 +2,8 @@
  * Rich presence (Discord-style) formatting for status.activity from the API.
  */
 
+import { publicApiUrl } from '../api';
+
 export function formatActivityPrimary(activity) {
   if (!activity?.type || !activity?.name?.trim()) return null;
   const name = activity.name.trim();
@@ -55,7 +57,7 @@ export function resolveActivityImageUrl(image) {
   if (typeof image === 'string') return image;
   if (typeof image === 'object') {
     if (image.url) return image.url;
-    if (image._id) return `/attachments/${image._id}`;
+    if (image._id) return publicApiUrl(`/attachments/${image._id}`);
   }
   return null;
 }

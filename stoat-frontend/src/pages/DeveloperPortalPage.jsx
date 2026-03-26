@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { del, get, patch, post, uploadFile } from '../api';
+import { del, get, patch, post, uploadFile, apiUrl } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
@@ -590,7 +590,7 @@ export default function DeveloperPortalPage() {
           <p>While the lease is active, you count as online in member lists even if no browser tab is connected.</p>
           <pre className="dev-code">{NODE_PRESENCE_SNIPPET}</pre>
           <pre className="dev-code">
-            {`curl -X PATCH "${typeof window !== 'undefined' ? window.location.origin : ''}/api/public/v1/presence" \\
+            {`curl -X PATCH "${apiUrl('/public/v1/presence')}" \\
   -H "Authorization: Bearer YOUR_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{"activity":{"type":"Playing","name":"My Game"},"ttl_seconds":120}'`}

@@ -30,7 +30,18 @@ import analytics from './routes/analytics.js';
 const app = express();
 
 const corsOptions = config.corsOrigins?.length
-  ? { origin: config.corsOrigins, credentials: true }
+  ? {
+      origin: config.corsOrigins,
+      credentials: true,
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'x-session-token',
+        'x-admin-token',
+        'x-bot-token',
+        'x-invoker-user-id',
+      ],
+    }
   : { origin: true, credentials: true };
 
 // Compress JSON and text responses to reduce payload size and improve network efficiency

@@ -5,14 +5,24 @@ const WSContext = createContext(null);
 
 /**
  * Build gateway WebSocket URL.
- * - Default: same origin `/ws?token=` (matches Vite dev proxy and typical nginx → Stoat).
- * - VITE_WS_URL: direct API (e.g. ws://localhost:14702) bypasses proxy. Stoat listens at path `/`.
- * - If VITE_WS_URL is the same host as the page (e.g. wss://opic.fun), still use `/ws` so the
- *   reverse proxy upgrades the right path — NOT `/?token=` which hits the HTML server and fails.
+ * - Default: same origin `/ws?token=` (Vite dev proxy or single-host nginx).
+ * - VITE_API_ORIGIN (e.g. https://api.opic.fun): gateway on that host at path `/` (split from web app).
+ * - VITE_WS_URL: explicit override; Stoat listens at path `/` on the API server.
+ * - Same host as page + explicit wss://opic.fun: use `/ws` (not `/?token=`).
  */
 function buildWebSocketUrl(token) {
   const q = `token=${encodeURIComponent(token)}`;
-  const raw = import.meta.env.VITE_WS_URL?.trim();
+  let raw = import.meta.env.VITE_WS_URL?.trim();
+  if (!raw && import.meta.env.VITE_API_ORIGIN?.trim()) {
+    const a = import.meta.env.VITE_API_ORIGIN.trim().replace(/\/$/, '');
+    try {
+      const u = new URL(a.startsWith('http') ? a : `https://${a}`);
+      const wsProto = u.protocol === 'https:' ? 'wss' : 'ws';
+      raw = `${wsProto}://${u.host}/`;
+    } catch {
+      raw = undefined;
+    }
+  }
   const pagePort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
 
   if (raw) {

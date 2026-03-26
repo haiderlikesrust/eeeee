@@ -1,6 +1,4 @@
-import { getToken } from '../api';
-
-const API_BASE = '/api';
+import { getToken, apiUrl } from '../api';
 const LS_ANON = 'stoat_analytics_anon_id';
 const LS_OPT_OUT = 'stoat_analytics_opt_out';
 const SS_SESSION = 'stoat_analytics_session';
@@ -102,7 +100,7 @@ async function sendWithFetch(body) {
   const headers = { 'Content-Type': 'application/json' };
   const token = getToken();
   if (token) headers['x-session-token'] = token;
-  const res = await fetch(`${API_BASE}/analytics/batch`, {
+  const res = await fetch(apiUrl('/analytics/batch'), {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -115,7 +113,7 @@ function sendWithBeacon(body) {
   if (typeof navigator === 'undefined' || !navigator.sendBeacon) return false;
   try {
     const blob = new Blob([JSON.stringify(body)], { type: 'application/json' });
-    return navigator.sendBeacon(`${API_BASE}/analytics/batch`, blob);
+    return navigator.sendBeacon(apiUrl('/analytics/batch'), blob);
   } catch {
     return false;
   }
