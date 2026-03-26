@@ -6,11 +6,18 @@ function normId(id) {
   return id.replace(/\\/g, '/')
 }
 
+/** When you open the dev server via a public hostname (e.g. https://opic.fun → :5173), set this so HMR WS is not localhost. */
+const publicDevHost = process.env.VITE_PUBLIC_DEV_HOST?.trim()
+
 export default defineConfig({
   plugins: [react()],
   // Ensure a single React instance in the bundle (avoids "Cannot read properties of null (reading 'useState')" in prod).
   resolve: {
     dedupe: ['react', 'react-dom'],
+  },
+  // Dev: force one React copy for hooks (invalid hook call when /@fs or chunk splits pull a second react).
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
   },
   build: {
     rollupOptions: {
@@ -34,6 +41,15 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     allowedHosts: ['opic.fun', 'www.opic.fun'],
+    ...(publicDevHost
+      ? {
+          hmr: {
+            host: publicDevHost,
+            protocol: 'wss',
+            clientPort: 443,
+          },
+        }
+      : {}),
     proxy: {
       '/api': {
         target: 'http://localhost:14702',

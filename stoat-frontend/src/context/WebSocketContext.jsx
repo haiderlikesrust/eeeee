@@ -3,15 +3,40 @@ import { getToken } from '../api';
 
 const WSContext = createContext(null);
 
-/** Dev: set VITE_WS_URL=ws://localhost:14702 to skip the Vite proxy and connect straight to the API. */
+/**
+ * Build gateway WebSocket URL.
+ * - Default: same origin `/ws?token=` (matches Vite dev proxy and typical nginx → Stoat).
+ * - VITE_WS_URL: direct API (e.g. ws://localhost:14702) bypasses proxy. Stoat listens at path `/`.
+ * - If VITE_WS_URL is the same host as the page (e.g. wss://opic.fun), still use `/ws` so the
+ *   reverse proxy upgrades the right path — NOT `/?token=` which hits the HTML server and fails.
+ */
 function buildWebSocketUrl(token) {
-  const direct = import.meta.env.VITE_WS_URL;
-  if (direct && String(direct).trim()) {
-    const base = String(direct).replace(/\/$/, '');
-    return `${base}/?token=${encodeURIComponent(token)}`;
+  const q = `token=${encodeURIComponent(token)}`;
+  const raw = import.meta.env.VITE_WS_URL?.trim();
+  const pagePort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+
+  if (raw) {
+    try {
+      const normalized = raw.replace(/^ws:/i, 'http:').replace(/^wss:/i, 'https:');
+      const u = new URL(normalized);
+      const targetPort = u.port || (u.protocol === 'https:' ? '443' : '80');
+      const sameHostAsPage =
+        u.hostname === window.location.hostname && String(targetPort) === String(pagePort);
+      if (sameHostAsPage) {
+        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        return `${protocol}://${window.location.host}/ws?${q}`;
+      }
+      const wsProto = u.protocol === 'https:' ? 'wss' : 'ws';
+      const path = u.pathname && u.pathname !== '/' ? u.pathname : '/';
+      const hostPort = u.port ? `${u.hostname}:${u.port}` : u.hostname;
+      return `${wsProto}://${hostPort}${path}?${q}`;
+    } catch {
+      /* use default below */
+    }
   }
+
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${protocol}://${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+  return `${protocol}://${window.location.host}/ws?${q}`;
 }
 
 export function WebSocketProvider({ children }) {
