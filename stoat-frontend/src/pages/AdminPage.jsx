@@ -4,7 +4,6 @@ import { resolveFileUrl } from '../utils/avatarUrl';
 import { clearSystemBadgeCache } from '../utils/systemBadges';
 import { OPIC_STAFF_BADGE_ID, userHasOpicStaff } from '../utils/opicStaff';
 import { useToast } from '../context/ToastContext';
-import { apiUrl } from '../api';
 import './AdminPage.css';
 
 const ADMIN_TOKEN_KEY = 'admin_token';
@@ -22,7 +21,7 @@ async function adminFetch(path, { method = 'GET', body, token, isForm = false } 
   const headers = {};
   if (!isForm) headers['Content-Type'] = 'application/json';
   if (token) headers['x-admin-token'] = token;
-  const res = await fetch(apiUrl(`/admin${path}`), {
+  const res = await fetch(`/api/admin${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : (isForm ? body : JSON.stringify(body)),

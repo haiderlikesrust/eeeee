@@ -1,27 +1,4 @@
-/**
- * When set (e.g. https://api.opic.fun), REST calls go to that host (split from the web app).
- * When unset, use same-origin /api (Vite proxy in dev, or nginx on opic.fun).
- */
-const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN || '').replace(/\/$/, '');
-
-/** REST path on the API host: /users/..., /auth/..., etc. */
-export function apiUrl(path) {
-  const p = path.startsWith('/') ? path : `/${path}`;
-  if (API_ORIGIN) return `${API_ORIGIN}${p}`;
-  return `/api${p}`;
-}
-
-/**
- * Paths served on the API host but not under the /api nginx prefix (e.g. /attachments/...).
- * Same-origin without VITE_API_ORIGIN: returns path as-is for /attachments on the web host.
- */
-export function publicApiUrl(path) {
-  const p = path.startsWith('/') ? path : `/${path}`;
-  if (API_ORIGIN) return `${API_ORIGIN}${p}`;
-  return p;
-}
-
-export { API_ORIGIN };
+const API_BASE = '/api';
 
 const GET_CACHE_TTL_MS = 3000; // 3 seconds
 const getCache = new Map(); // path -> { data, expires }
@@ -71,7 +48,7 @@ export async function api(method, path, body) {
   if (token) headers['x-session-token'] = token;
   const opts = { method, headers };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  const res = await fetch(apiUrl(path), opts);
+  const res = await fetch(`${API_BASE}${path}`, opts);
   if (res.status === 204) return null;
   const raw = await res.text();
   if (!raw.length) {
@@ -117,7 +94,7 @@ export async function uploadFile(file) {
   const headers = {};
   const token = getToken();
   if (token) headers['x-session-token'] = token;
-  const res = await fetch(publicApiUrl('/attachments'), { method: 'POST', headers, body: formData });
+  const res = await fetch('/api/attachments', { method: 'POST', headers, body: formData });
   const raw = await res.text();
   if (!raw.length) {
     if (!res.ok) throw { type: 'UnknownError', error: `HTTP ${res.status}`, status: res.status };

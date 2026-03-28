@@ -1,7 +1,7 @@
-# Opic production split:
-#   https://opic.fun      → frontend (nginx → 5173 or static dist)
-#   https://api.opic.fun  → Stoat API + WebSocket + /attachments
-# Set VITE_API_ORIGIN empty for local all-in-one /api proxy (see stoat-frontend/.env.example).
+# Opic @ https://opic.fun — production-oriented defaults for Docker + nginx reverse proxy.
+# Browser app uses same-origin /api and /ws (see deploy-nginx-opic.fun.conf). Stoat’s gateway path is /
+# internally; nginx maps public /ws → backend /, so WS_URL is wss://opic.fun/ws for GET / hints and clients.
+# Override any value with a root .env or `export VAR=...` before `docker compose up`.
 
 services:
   mongo:
@@ -20,7 +20,7 @@ services:
       PORT: 14702
       MONGODB_URI: mongodb://mongo:27017/stoat
       APP_URL: ${APP_URL:-https://opic.fun}
-      WS_URL: ${WS_URL:-wss://api.opic.fun/}
+      WS_URL: ${WS_URL:-wss://opic.fun/ws}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://opic.fun,https://www.opic.fun}
     depends_on:
       - mongo
@@ -39,7 +39,6 @@ services:
     environment:
       VITE_GIPHY_API_KEY: ${VITE_GIPHY_API_KEY:-}
       VITE_TENOR_API_KEY: ${VITE_TENOR_API_KEY:-}
-      VITE_API_ORIGIN: ${VITE_API_ORIGIN:-https://api.opic.fun}
     ports:
       - "127.0.0.1:5173:5173"
 

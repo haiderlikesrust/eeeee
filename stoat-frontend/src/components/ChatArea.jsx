@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { get, post, patch, del, put, uploadFile, publicApiUrl } from '../api';
+import { get, post, patch, del, put, uploadFile } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useWS } from '../context/WebSocketContext';
 import { useMobile } from '../context/MobileContext';
@@ -294,7 +294,7 @@ function renderMessageContent(content, customEmojiMap, user, mentionDirectory, o
     const customMatch = part.match(/^<:([a-zA-Z0-9_]+):([a-zA-Z0-9]+)>$/);
     if (customMatch) {
       const [, name, id] = customMatch;
-      const url = customEmojiMap?.[id]?.url || publicApiUrl(`/attachments/${id}`);
+      const url = customEmojiMap?.[id]?.url || `/attachments/${id}`;
       return <img key={i} src={url} alt={`:${name}:`} title={`:${name}:`} className={`inline-emoji custom-inline-emoji ${cls}`} />;
     }
     const shortcodeMatch = part.match(/^:([a-zA-Z0-9_]+):$/);
