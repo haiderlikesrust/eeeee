@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { get, post, patch, del, put, uploadFile } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useWS } from '../context/WebSocketContext';
@@ -18,6 +19,7 @@ import FormattingToolbar from './FormattingToolbar';
 import ThreadPanel from './ThreadPanel';
 import WhiteboardModal from './WhiteboardModal';
 import ServerOwnerCrown from './ServerOwnerCrown';
+import GeoGuesserEmbed from './GeoGuesserEmbed';
 import { showServerOwnerCrownForUser } from '../utils/serverOwnerCrownDisplay';
 import OfeedShareLinkCard from './OfeedShareLinkCard';
 import { parseOfeedShareUrl, shouldHideOfeedUrlInMessage } from '../utils/ofeedShareUrl';
@@ -78,12 +80,15 @@ function isEmojiOnly(content) {
   return emojiCount > 0 && emojiCount <= 27;
 }
 
-function renderMessageEmbeds(embeds, { onJoinWhiteboard } = {}) {
+function renderMessageEmbeds(embeds, { onJoinWhiteboard, userId } = {}) {
   if (!Array.isArray(embeds) || embeds.length === 0) return null;
   return (
     <div className="msg-embeds">
       {embeds.map((embed, i) => {
         if (!embed || typeof embed !== 'object') return null;
+        if (typeof embed.type === 'string' && embed.type.startsWith('geoguesser_') && embed.session_id) {
+          return <GeoGuesserEmbed key={`geo-${embed.session_id}-${i}`} embed={embed} userId={userId} />;
+        }
         if (embed.type === 'whiteboard_invite' && embed.session_id) {
           const ended = embed.session_status === 'closed' || embed.session_status === 'ended';
           if (ended) {
@@ -396,8 +401,50 @@ function renderMessageContent(content, customEmojiMap, user, mentionDirectory, o
 
 const TYPING_SEND_INTERVAL_MS = 2000;
 const TYPING_STOP_DELAY_MS = 3000;
+const CHANNEL_NOTIFICATION_PRESETS_KEY = 'opic.channelNotificationPresets.v1';
+const REACTION_RECENTS_KEY = 'opic.reactionRecents.v1';
+const LAST_VISIT_BY_CHANNEL_KEY = 'opic.lastVisitByChannel.v1';
+const SCHEDULED_DRAFTS_KEY = 'opic.scheduledDrafts.v1';
+const MESSAGE_REMINDERS_KEY = 'opic.messageReminders.v1';
+const ONBOARD_FIRST_POST_KEY = 'opic.onboarding.firstPost.v1';
+const COMPACT_MODE_KEY = 'opic.chat.compactMode.v1';
 
-export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChannelAccessLost }) {
+function readJsonStorage(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonStorage(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+
+function loadRecentReactions() {
+  const items = readJsonStorage(REACTION_RECENTS_KEY, []);
+  return Array.isArray(items) ? items.filter((x) => typeof x === 'string').slice(0, 12) : [];
+}
+
+function rememberReaction(emoji) {
+  const current = loadRecentReactions();
+  const next = [emoji, ...current.filter((x) => x !== emoji)].slice(0, 12);
+  writeJsonStorage(REACTION_RECENTS_KEY, next);
+}
+
+function formatCloudMb(bytes) {
+  const b = Number(bytes) || 0;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChannelAccessLost, isRoom, roomName }) {
+  const location = useLocation();
   const { user } = useAuth();
   const toast = useToast();
   const { send, on } = useWS();
@@ -419,10 +466,24 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   const [contextMenu, setContextMenu] = useState(null);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchFilters, setSearchFilters] = useState({
+    from: '',
+    hasFile: false,
+    dateFrom: '',
+    dateTo: '',
+    inChannel: true,
+  });
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [compactMode, setCompactMode] = useState(() => readJsonStorage(COMPACT_MODE_KEY, false) === true);
   const [showPinned, setShowPinned] = useState(false);
   const [pinnedMessages, setPinnedMessages] = useState([]);
+  const [pinnedFilter, setPinnedFilter] = useState('');
+  const [showDigest, setShowDigest] = useState(false);
+  const [digestSummary, setDigestSummary] = useState(null);
+  const [notifPreset, setNotifPreset] = useState('all');
+  const [scheduledAt, setScheduledAt] = useState('');
+  const [editHistoryModal, setEditHistoryModal] = useState(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(null);
   const [showInputEmoji, setShowInputEmoji] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
@@ -451,6 +512,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   const [componentPending, setComponentPending] = useState({});
   const [contextCommandPending, setContextCommandPending] = useState(null);
   const [interactionModal, setInteractionModal] = useState(null);
+  const [cloudStats, setCloudStats] = useState(null);
   const bottomRef = useRef(null);
   const pollRef = useRef(null);
   /** Ignore HTTP results if user switched channel before the request finished. */
@@ -473,6 +535,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       : perms;
 
   const canSend = hasPermission(effectivePerms, Permissions.SEND_MESSAGES);
+  const isClawDmReadOnly = channel?.channel_type === 'DirectMessage' && channel?.read_only_for_user === true;
   const canManageMessages = hasPermission(effectivePerms, Permissions.MANAGE_MESSAGES);
   const canAttachFiles = hasPermission(effectivePerms, Permissions.ATTACH_FILES);
   const canSendVoiceMessage = hasPermission(effectivePerms, Permissions.SEND_VOICE_MESSAGE);
@@ -482,6 +545,40 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   useEffect(() => {
     if (!canAttachFiles) setPendingFiles((p) => (p.length === 0 ? p : []));
   }, [canAttachFiles]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!channelId || !canAttachFiles || isRoom) {
+      setCloudStats(null);
+      return () => { cancelled = true; };
+    }
+    get('/cloud/stats')
+      .then((d) => {
+        if (cancelled || !d) return;
+        setCloudStats({
+          used_bytes: d.used_bytes || 0,
+          quota_bytes: d.quota_bytes || 0,
+        });
+      })
+      .catch(() => { if (!cancelled) setCloudStats(null); });
+    return () => { cancelled = true; };
+  }, [channelId, canAttachFiles, isRoom]);
+
+  useEffect(() => {
+    if (loading || messages.length === 0) return;
+    const m = location.hash?.match(/^#msg-(.+)/);
+    if (!m) return;
+    const msgDomId = `msg-${m[1]}`;
+    requestAnimationFrame(() => {
+      const el = document.getElementById(msgDomId);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('msg-highlight');
+        setTimeout(() => el.classList.remove('msg-highlight'), 1500);
+        window.history.replaceState(null, '', `${location.pathname}${location.search}`);
+      }
+    });
+  }, [loading, messages.length, channelId, location.hash, location.pathname, location.search]);
 
   useEffect(() => {
     const byName = {};
@@ -526,7 +623,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       setMessages((prev) => mergeMessagesWithPendingOptimistic(prev, msgs));
       /** Until perms load, `perms === 0` reads as “no send” — only end loading after we know permissions (initial load). */
       if (!skipPerms) {
-        if (ch.server) {
+        if (ch.server && !isRoom) {
           try {
             const [p, emojis, members, serverData] = await Promise.all([
               get(`/channels/${cid}/permissions`).catch(() => ({})),
@@ -624,6 +721,10 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     setWhiteboardBanner(null);
     setShowSearch(false);
     setShowPinned(false);
+    setShowDigest(false);
+    setDigestSummary(null);
+    setPinnedFilter('');
+    setScheduledAt('');
     setTranslatedByMsg({});
     setTranslateLoadingId(null);
     setContextCommandPending(null);
@@ -634,6 +735,63 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     const pollIntervalMs = 10000;
     pollRef.current = setInterval(() => fetchMessagesRef.current({ skipPerms: true }), pollIntervalMs);
     return () => clearInterval(pollRef.current);
+  }, [channelId]);
+
+  useEffect(() => {
+    if (!channelId) return;
+    const map = readJsonStorage(CHANNEL_NOTIFICATION_PRESETS_KEY, {});
+    const preset = String(map?.[channelId] || 'all');
+    setNotifPreset(['all', 'mentions', 'none'].includes(preset) ? preset : 'all');
+  }, [channelId]);
+
+  useEffect(() => {
+    return () => {
+      if (!channelId) return;
+      const map = readJsonStorage(LAST_VISIT_BY_CHANNEL_KEY, {});
+      map[channelId] = Date.now();
+      writeJsonStorage(LAST_VISIT_BY_CHANNEL_KEY, map);
+    };
+  }, [channelId]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const reminders = readJsonStorage(MESSAGE_REMINDERS_KEY, []);
+      if (!Array.isArray(reminders) || reminders.length === 0) return;
+      const now = Date.now();
+      const due = reminders.filter((r) => Number(r?.remindAt) <= now);
+      if (due.length > 0) {
+        for (const r of due.slice(0, 3)) {
+          toast.info(`Reminder: ${String(r.preview || '').slice(0, 120)}`);
+        }
+      }
+      const pending = reminders.filter((r) => Number(r?.remindAt) > now);
+      if (pending.length !== reminders.length) writeJsonStorage(MESSAGE_REMINDERS_KEY, pending);
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    if (!channelId) return;
+    const flush = async () => {
+      const drafts = readJsonStorage(SCHEDULED_DRAFTS_KEY, []);
+      if (!Array.isArray(drafts) || drafts.length === 0) return;
+      const now = Date.now();
+      const due = drafts.filter((d) => d?.channelId === channelId && Number(d?.sendAt) <= now).slice(0, 3);
+      if (due.length === 0) return;
+      for (const draft of due) {
+        try {
+          const msg = await post(`/channels/${channelId}/messages`, { content: String(draft.content || '') });
+          setMessages((prev) => (prev.some((m) => m._id === msg._id) ? prev : [...prev, msg]));
+          localStorage.setItem(ONBOARD_FIRST_POST_KEY, '1');
+        } catch {}
+      }
+      const ids = new Set(due.map((d) => d.id));
+      const keep = drafts.filter((d) => !ids.has(d.id));
+      writeJsonStorage(SCHEDULED_DRAFTS_KEY, keep);
+    };
+    void flush();
+    const timer = setInterval(() => { void flush(); }, 10000);
+    return () => clearInterval(timer);
   }, [channelId]);
 
   useEffect(() => {
@@ -1127,6 +1285,32 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     const replySnap = replyingTo ? { ...replyingTo } : null;
     let optimisticId = null;
 
+    if (scheduledAt) {
+      const sendAtMs = new Date(scheduledAt).getTime();
+      if (Number.isFinite(sendAtMs) && sendAtMs > Date.now()) {
+        if (filesSnapshot.length > 0 || replySnap) {
+          toast.error('Scheduled send currently supports text-only messages.');
+          return;
+        }
+        const drafts = readJsonStorage(SCHEDULED_DRAFTS_KEY, []);
+        const next = [
+          ...(Array.isArray(drafts) ? drafts : []),
+          {
+            id: crypto.randomUUID(),
+            channelId,
+            content: String(contentSnapshot || ''),
+            sendAt: sendAtMs,
+          },
+        ];
+        writeJsonStorage(SCHEDULED_DRAFTS_KEY, next);
+        setInput('');
+        setScheduledAt('');
+        toast.success(`Message scheduled for ${new Date(sendAtMs).toLocaleString()}`);
+        return;
+      }
+      setScheduledAt('');
+    }
+
     setUploading(true);
     try {
       const attachments = [];
@@ -1178,6 +1362,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
           channelId: msg.whiteboard_session.channel_id || channelId,
         });
       }
+      localStorage.setItem(ONBOARD_FIRST_POST_KEY, '1');
       if (channel?.slowmode > 0) setSlowmodeCooldown(channel.slowmode);
     } catch (err) {
       if (err?.type === 'FailedDependency' && err?.user_message) {
@@ -1258,7 +1443,11 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   };
 
   const addReaction = async (msgId, emoji) => {
-    try { await put(`/channels/${channelId}/messages/${msgId}/reactions/${encodeURIComponent(emoji)}`); fetchMessages(); } catch {}
+    try {
+      await put(`/channels/${channelId}/messages/${msgId}/reactions/${encodeURIComponent(emoji)}`);
+      rememberReaction(emoji);
+      fetchMessages();
+    } catch {}
     setShowEmojiPicker(null); setContextMenu(null);
   };
   const removeReaction = async (msgId, emoji) => {
@@ -1351,9 +1540,18 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   };
 
   const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim() && !searchFilters.from && !searchFilters.hasFile && !searchFilters.dateFrom && !searchFilters.dateTo) return;
     setSearching(true);
-    try { const res = await post(`/channels/${channelId}/search`, { query: searchQuery }); setSearchResults(res?.messages || res || []); } catch {}
+    try {
+      const res = await post(`/channels/${channelId}/search`, {
+        query: searchQuery,
+        from: searchFilters.from || undefined,
+        has_file: !!searchFilters.hasFile,
+        date_from: searchFilters.dateFrom || undefined,
+        date_to: searchFilters.dateTo || undefined,
+      });
+      setSearchResults(res?.messages || res || []);
+    } catch {}
     setSearching(false);
   };
 
@@ -1390,6 +1588,112 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   };
 
   const loadPinned = async () => { try { const msgs = await get(`/channels/${channelId}/messages?pinned=true`); setPinnedMessages(msgs || []); } catch { setPinnedMessages([]); } };
+
+  const openEditHistory = async (msg) => {
+    if (!msg?._id) return;
+    try {
+      const data = await get(`/channels/${channelId}/messages/${msg._id}/history`);
+      setEditHistoryModal({
+        messageId: msg._id,
+        currentContent: data?.current_content || msg.content || '',
+        history: Array.isArray(data?.history) ? data.history : [],
+      });
+    } catch {
+      setEditHistoryModal({
+        messageId: msg._id,
+        currentContent: msg.content || '',
+        history: [],
+      });
+    }
+    setContextMenu(null);
+  };
+
+  const createReminderForMessage = (msg) => {
+    if (!msg?._id) return;
+    const minutesText = window.prompt('Remind in how many minutes?', '30');
+    const minutes = Number(minutesText);
+    if (!Number.isFinite(minutes) || minutes <= 0) return;
+    const remindAt = Date.now() + minutes * 60 * 1000;
+    const reminders = readJsonStorage(MESSAGE_REMINDERS_KEY, []);
+    const next = [
+      ...reminders,
+      {
+        id: crypto.randomUUID(),
+        channelId,
+        messageId: msg._id,
+        preview: String(msg.content || '(attachment)').slice(0, 180),
+        remindAt,
+      },
+    ];
+    writeJsonStorage(MESSAGE_REMINDERS_KEY, next);
+    toast.success(`Reminder set for ${minutes} minute(s)`);
+    setContextMenu(null);
+  };
+
+  const scheduleMessagePrompt = () => {
+    const minutesText = window.prompt('Send this message in how many minutes?', '10');
+    const minutes = Number(minutesText);
+    if (!Number.isFinite(minutes) || minutes <= 0) return;
+    const sendAt = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+    setScheduledAt(sendAt);
+    toast.info(`Message will be scheduled in ${minutes} minute(s)`);
+  };
+
+  const cycleNotifPreset = () => {
+    if (!channelId) return;
+    const order = ['all', 'mentions', 'none'];
+    const idx = order.indexOf(notifPreset);
+    const next = order[(idx + 1) % order.length];
+    setNotifPreset(next);
+    const map = readJsonStorage(CHANNEL_NOTIFICATION_PRESETS_KEY, {});
+    map[channelId] = next;
+    writeJsonStorage(CHANNEL_NOTIFICATION_PRESETS_KEY, map);
+    toast.info(`Notifications: ${next}`);
+  };
+
+  const toggleCompactMode = () => {
+    setCompactMode((prev) => {
+      const next = !prev;
+      writeJsonStorage(COMPACT_MODE_KEY, next);
+      toast.info(next ? 'Compact mode on' : 'Compact mode off');
+      return next;
+    });
+  };
+
+  const buildCatchUpSummary = () => {
+    const visitMap = readJsonStorage(LAST_VISIT_BY_CHANNEL_KEY, {});
+    const since = Number(visitMap?.[channelId] || 0);
+    const relevant = messages.filter((m) => {
+      const t = messageSortTime(m);
+      return since ? t > since : true;
+    });
+    if (relevant.length === 0) {
+      setDigestSummary({ total: 0, authors: [], highlights: [] });
+      return;
+    }
+    const authorCounts = {};
+    for (const m of relevant) {
+      const name = typeof m.author === 'object' && m.author
+        ? (m.author.display_name || m.author.username || 'Unknown')
+        : (m.author === user?._id ? (user?.display_name || user?.username || 'You') : 'Unknown');
+      authorCounts[name] = (authorCounts[name] || 0) + 1;
+    }
+    const authors = Object.entries(authorCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([name, count]) => ({ name, count }));
+    const highlights = relevant
+      .filter((m) => String(m.content || '').trim().length > 0)
+      .slice(-4)
+      .map((m) => ({
+        id: m._id,
+        author: typeof m.author === 'object' && m.author
+          ? (m.author.display_name || m.author.username || 'Unknown')
+          : (m.author === user?._id ? (user?.display_name || user?.username || 'You') : 'Unknown'),
+        text: String(m.content || '').slice(0, 120),
+      }));
+    setDigestSummary({ total: relevant.length, authors, highlights });
+  };
 
   const handleContextMenu = (e, msg) => {
     e.preventDefault();
@@ -1567,9 +1871,11 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     }
   };
 
-  const channelDisplayName = channel?.channel_type === 'DirectMessage' && channel?.other_user
-    ? (channel.other_user.display_name || channel.other_user.username || 'Direct Message')
-    : (channel?.name || 'Channel');
+  const channelDisplayName = isRoom && roomName
+    ? roomName
+    : channel?.channel_type === 'DirectMessage' && channel?.other_user
+      ? (channel.other_user.display_name || channel.other_user.username || 'Direct Message')
+      : (channel?.name || 'Channel');
 
   /** Keep full composer (and perms-based UI) hidden until `loading` is false — messages often arrive before `/permissions`, and perms default to 0 (looks like “no send”). */
   if (loading) {
@@ -1577,7 +1883,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       <div className="chat-area chat-area--initial-load">
         <div className="chat-header">
           {isMobile && <button className="mobile-drawer-btn" onClick={openChannelSidebar} aria-label="Open channels"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg></button>}
-          <span className="hash-big">#</span>
+          {!isRoom && <span className="hash-big">#</span>}
           <span className="chat-header-name">{channel ? channelDisplayName : '…'}</span>
         </div>
         <div className="messages-list chat-messages-skel" aria-busy="true" aria-label="Loading messages">
@@ -1642,16 +1948,41 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     .filter((item) => !!item.name)
     .slice(0, 8);
 
+  const quickReactionList = loadRecentReactions().slice(0, 3);
+  const searchAuthorOptions = (() => {
+    const options = [];
+    const seen = new Set();
+    const add = (id, label) => {
+      if (!id || seen.has(String(id))) return;
+      seen.add(String(id));
+      options.push({ id: String(id), label: label || String(id) });
+    };
+    if (user?._id) add(user._id, `${user.display_name || user.username || 'You'} (me)`);
+    for (const msg of messages) {
+      const authorId = typeof msg.author === 'object' ? msg.author?._id : msg.author;
+      const authorName = typeof msg.author === 'object'
+        ? (msg.author.display_name || msg.author.username || authorId)
+        : authorId;
+      add(authorId, authorName);
+    }
+    for (const m of Object.values(mentionDirectory?.byId || {})) {
+      const id = m?.user?._id || m?._id || m?.user || null;
+      const label = m?.nickname || m?.user?.display_name || m?.user?.username || id;
+      add(id, label);
+    }
+    return options;
+  })();
+
   return (
     <>
-    <div className="chat-area" onClick={() => { setContextMenu(null); setShowEmojiPicker(null); setShowInputEmoji(false); setShowGifPicker(false); setMentionCard(null); }}>
+    <div className={`chat-area${compactMode ? ' compact-mode' : ''}`} onClick={() => { setContextMenu(null); setShowEmojiPicker(null); setShowInputEmoji(false); setShowGifPicker(false); setMentionCard(null); }}>
       <div className="chat-header">
         {isMobile && (
           <button className="mobile-drawer-btn" onClick={openChannelSidebar} aria-label="Open channels">
             <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
           </button>
         )}
-        <span className="hash-big">#</span>
+        {!isRoom && <span className="hash-big">#</span>}
         <span className="chat-header-name">{channelDisplayName}</span>
         {!isMobile && channel?.description && <span className="chat-header-desc">{channel.description}</span>}
         {typingUserIds.size > 0 && (
@@ -1664,11 +1995,20 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
           </span>
         )}
         <div className="chat-header-actions">
+          <button className="chat-header-btn" onClick={cycleNotifPreset} title={`Notifications: ${notifPreset}`}>
+            <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 1 0-14 0v5l-2 2v1h18v-1l-2-2Z"/></svg>
+          </button>
+          <button className="chat-header-btn" onClick={() => { const next = !showDigest; setShowDigest(next); if (!showDigest) buildCatchUpSummary(); }} title="Catch me up">
+            <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M4 5h16v2H4V5Zm0 6h11v2H4v-2Zm0 6h16v2H4v-2Z"/></svg>
+          </button>
           <button className="chat-header-btn" onClick={() => { setShowPinned(!showPinned); setShowSearch(false); if (!showPinned) loadPinned(); }} title="Pinned Messages">
             <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
           </button>
           <button className="chat-header-btn" onClick={() => { setShowSearch(!showSearch); setShowPinned(false); }} title="Search">
             <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          </button>
+          <button className={`chat-header-btn ${compactMode ? 'chat-header-btn--active' : ''}`} onClick={toggleCompactMode} title={compactMode ? 'Compact mode on' : 'Compact mode off'}>
+            <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h10v2H4v-2z"/></svg>
           </button>
           <button
             type="button"
@@ -1691,8 +2031,46 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       {showSearch && (
         <div className="search-panel">
           <div className="search-input-row">
-            <input className="search-input" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search messages..." autoFocus onKeyDown={(e) => e.key === 'Enter' && handleSearch()} />
+            <input className="search-input" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Full-text search..." autoFocus onKeyDown={(e) => e.key === 'Enter' && handleSearch()} />
             <button className="modal-btn primary" onClick={handleSearch} disabled={searching}>{searching ? '...' : 'Search'}</button>
+          </div>
+          <div className="search-input-row search-filter-row">
+            <select
+              className="search-input"
+              value={searchFilters.from}
+              onChange={(e) => setSearchFilters((prev) => ({ ...prev, from: e.target.value }))}
+              title="Filter by author"
+            >
+              <option value="">From: anyone</option>
+              {searchAuthorOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+            <label className="search-toggle">
+              <input
+                type="checkbox"
+                checked={searchFilters.hasFile}
+                onChange={(e) => setSearchFilters((prev) => ({ ...prev, hasFile: e.target.checked }))}
+              />
+              <span>has:file</span>
+            </label>
+          </div>
+          <div className="search-input-row search-filter-row">
+            <input
+              className="search-input"
+              type="date"
+              value={searchFilters.dateFrom}
+              onChange={(e) => setSearchFilters((prev) => ({ ...prev, dateFrom: e.target.value }))}
+              title="After date"
+            />
+            <input
+              className="search-input"
+              type="date"
+              value={searchFilters.dateTo}
+              onChange={(e) => setSearchFilters((prev) => ({ ...prev, dateTo: e.target.value }))}
+              title="Before date"
+            />
+            <div className="search-chip">in-channel</div>
           </div>
           {searchResults.length > 0 && (
             <div className="search-results">
@@ -1705,7 +2083,31 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               ))}
             </div>
           )}
-          {searchResults.length === 0 && searchQuery && !searching && <div className="search-empty">No results found</div>}
+          {searchResults.length === 0 && (searchQuery || searchFilters.from || searchFilters.hasFile || searchFilters.dateFrom || searchFilters.dateTo) && !searching && <div className="search-empty">No results found</div>}
+        </div>
+      )}
+
+      {showDigest && (
+        <div className="search-panel">
+          <div className="pinned-header">Catch Me Up</div>
+          {!digestSummary || digestSummary.total === 0 ? (
+            <div className="search-empty">No new activity since your last visit.</div>
+          ) : (
+            <>
+              <div className="search-result-item">
+                <span className="search-result-author">{digestSummary.total} new messages</span>
+                <div className="search-result-text">
+                  Top authors: {digestSummary.authors.map((a) => `${a.name} (${a.count})`).join(', ')}
+                </div>
+              </div>
+              {(digestSummary.highlights || []).map((h) => (
+                <div key={h.id} className="search-result-item">
+                  <span className="search-result-author">{h.author}</span>
+                  <div className="search-result-text">{h.text}</div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
 
@@ -1735,12 +2137,41 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       {showPinned && (
         <div className="pinned-panel">
           <div className="pinned-header">Pinned Messages</div>
+          <div className="search-input-row">
+            <input
+              className="search-input"
+              value={pinnedFilter}
+              onChange={(e) => setPinnedFilter(e.target.value)}
+              placeholder="Filter pinned messages..."
+            />
+          </div>
           {pinnedMessages.length === 0 && <div className="search-empty">No pinned messages</div>}
-          {pinnedMessages.map((msg) => (
+          {pinnedMessages
+            .filter((msg) => {
+              if (!pinnedFilter.trim()) return true;
+              return String(msg.content || '').toLowerCase().includes(pinnedFilter.toLowerCase());
+            })
+            .map((msg) => (
             <div key={msg._id} className="search-result-item">
               <span className="search-result-author">{getAuthorName(msg)}</span>
               <span className="search-result-time">{formatTime(msg)}</span>
               <div className="search-result-text">{msg.content}</div>
+              <div className="search-input-row" style={{ marginTop: 6 }}>
+                <button
+                  className="modal-btn secondary"
+                  onClick={() => {
+                    const el = document.getElementById(`msg-${msg._id}`);
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      el.classList.add('msg-highlight');
+                      setTimeout(() => el.classList.remove('msg-highlight'), 1200);
+                    }
+                  }}
+                >
+                  Jump
+                </button>
+                <button className="modal-btn secondary" onClick={() => unpinMessage(msg._id)}>Unpin</button>
+              </div>
             </div>
           ))}
         </div>
@@ -1749,12 +2180,12 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       <div className="messages-list">
         {messages.length === 0 && (
           <div className="welcome-msg">
-            <h2>Welcome to #{channelDisplayName}!</h2>
-            <p>This is the start of the {channel?.channel_type === 'DirectMessage' ? 'conversation' : 'channel'}.</p>
+            <h2>{isRoom ? `Welcome to ${channelDisplayName}!` : `Welcome to #${channelDisplayName}!`}</h2>
+            <p>{isRoom ? 'Start chatting with everyone in this room.' : `This is the start of the ${channel?.channel_type === 'DirectMessage' ? 'conversation' : 'channel'}.`}</p>
           </div>
         )}
         {messages.map((msg, idx) => {
-          const showHeader = shouldShowHeader(msg, idx);
+          const showHeader = compactMode ? false : shouldShowHeader(msg, idx);
           const isEditing = editingMsg === msg._id;
           const authorId = getMessageAuthorId(msg);
           const authorObj = typeof msg.author === 'object' ? msg.author : null;
@@ -1832,7 +2263,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                         </div>
                       </div>
                     )}
-                    {renderMessageEmbeds(msg.embeds, { onJoinWhiteboard: openWhiteboardFromEmbed })}
+                    {renderMessageEmbeds(msg.embeds, { onJoinWhiteboard: openWhiteboardFromEmbed, userId: user?._id })}
                     {Array.isArray(msg.components) && msg.components.length > 0 && (
                       <div className="msg-components">
                         {normalizeMessageComponentRows(msg.components).map((row, rowIdx) => (
@@ -1937,6 +2368,23 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                     })}
                   </div>
                 )}
+                {isMobile && canReact && !isEditing && !msg._optimistic && (
+                  <div className="msg-mobile-quick-reactions">
+                    {quickReactionList.map((emoji) => (
+                      <button
+                        key={`mobile-quick-${msg._id}-${emoji}`}
+                        className="reaction-btn"
+                        onClick={(e) => { e.stopPropagation(); addReaction(msg._id, emoji); }}
+                        title={`React ${emoji}`}
+                      >
+                        {renderReactionEmoji(emoji)}
+                      </button>
+                    ))}
+                    <button className="reaction-btn" onClick={(e) => { e.stopPropagation(); setShowEmojiPicker(showEmojiPicker === msg._id ? null : msg._id); }} title="More reactions">
+                      +
+                    </button>
+                  </div>
+                )}
               </div>
               {!isEditing && !msg._optimistic && (
                 <div className="msg-action-bar" onClick={(e) => e.stopPropagation()}>
@@ -1945,6 +2393,16 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                       <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>
                     </button>
                   )}
+                  {canReact && quickReactionList.map((emoji) => (
+                    <button
+                      key={`${msg._id}-quick-${emoji}`}
+                      className="msg-action-btn msg-action-btn-quick-emoji"
+                      title={`React ${emoji}`}
+                      onClick={() => addReaction(msg._id, emoji)}
+                    >
+                      {renderReactionEmoji(emoji)}
+                    </button>
+                  ))}
                   <button className="msg-action-btn" title="Reply" onClick={() => startReply(msg)}>
                     <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>
                   </button>
@@ -1985,6 +2443,11 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                 <span className="ctx-quick-emoji">👍</span> React
               </div>
             )}
+            {canReact && quickReactionList.map((emoji) => (
+              <div key={`ctx-quick-${emoji}`} className="ctx-item" onClick={() => addReaction(contextMenu.msg._id, emoji)}>
+                <span className="ctx-quick-emoji">{renderReactionEmoji(emoji)}</span> Quick React
+              </div>
+            ))}
             {canReact && (
               <div className="ctx-item" onClick={() => { setShowEmojiPicker(contextMenu.msg._id); setContextMenu(null); }}>Add Reaction</div>
             )}
@@ -2000,6 +2463,14 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                 {translateLoadingId === contextMenu.msg._id
                   ? 'Translating...'
                   : (translatedByMsg[contextMenu.msg._id] ? 'Hide Translation' : 'Translate Message')}
+              </div>
+            )}
+            <div className="ctx-item" onClick={() => createReminderForMessage(contextMenu.msg)}>
+              Remind Me About This
+            </div>
+            {contextMenu.msg?.edited && (
+              <div className="ctx-item" onClick={() => openEditHistory(contextMenu.msg)}>
+                View Edit History
               </div>
             )}
             {messageContextItems.length > 0 && (
@@ -2106,7 +2577,35 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
         </>
       )}
 
-      {canSend ? (
+      {editHistoryModal && (
+        <>
+          <div className="mention-card-backdrop" onClick={() => setEditHistoryModal(null)} />
+          <div className="interaction-modal">
+            <div className="interaction-modal-title">Message Edit History</div>
+            <div className="search-result-item">
+              <span className="search-result-author">Current</span>
+              <div className="search-result-text">{editHistoryModal.currentContent || '(empty)'}</div>
+            </div>
+            {editHistoryModal.history.length === 0 ? (
+              <div className="search-empty">No previous versions recorded.</div>
+            ) : (
+              editHistoryModal.history.slice().reverse().map((item) => (
+                <div key={`${editHistoryModal.messageId}-${item.index}`} className="search-result-item">
+                  <span className="search-result-author">
+                    Edited {item.edited_at ? new Date(item.edited_at).toLocaleString() : 'previously'}
+                  </span>
+                  <div className="search-result-text">{item.content || '(empty)'}</div>
+                </div>
+              ))
+            )}
+            <div className="interaction-modal-actions">
+              <button type="button" className="modal-btn secondary" onClick={() => setEditHistoryModal(null)}>Close</button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {canSend && !isClawDmReadOnly ? (
         <form className={`chat-input-area${mentionCard ? ' chat-input-area-above-backdrop' : ''}`} onSubmit={sendMessage}>
           {replyingTo && (
             <div className="reply-bar">
@@ -2146,7 +2645,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               ))}
             </div>
           )}
-          <div className="chat-input-composer">
+          <div className="chat-input-composer" data-onboarding-id="onboarding-chat-composer">
             {autocomplete && (
               <div
                 className={`autocomplete-popup${autocomplete.mode === 'mention' ? ' autocomplete-popup-mention' : ''}${autocomplete.mode === 'slash' ? ' autocomplete-popup-slash' : ''}`}
@@ -2235,6 +2734,15 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               </svg>
             </button>
             )}
+            {cloudStats && cloudStats.quota_bytes > 0 && (
+              <Link
+                to="/cloud"
+                className={`chat-cloud-hint${cloudStats.used_bytes / cloudStats.quota_bytes >= 0.85 ? ' chat-cloud-hint--warn' : ''}`}
+                title="Opic Cloud storage"
+              >
+                {formatCloudMb(cloudStats.used_bytes)} / {formatCloudMb(cloudStats.quota_bytes)}
+              </Link>
+            )}
             {canSendVoiceMessage && (
             <button
               type="button"
@@ -2268,7 +2776,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               onBlur={sendTypingStop}
               onPaste={canAttachFiles ? handlePaste : undefined}
               onKeyDown={handleInputKeyDown}
-              placeholder={slowmodeCooldown > 0 ? `Slowmode: ${slowmodeCooldown}s remaining...` : uploading ? 'Uploading...' : `Message ${channel?.channel_type === 'DirectMessage' ? '@' : '#'}${channelDisplayName}`}
+              placeholder={slowmodeCooldown > 0 ? `Slowmode: ${slowmodeCooldown}s remaining...` : uploading ? 'Uploading...' : `Message ${isRoom ? '' : channel?.channel_type === 'DirectMessage' ? '@' : '#'}${channelDisplayName}`}
               disabled={uploading || slowmodeCooldown > 0}
             />
             </div>
@@ -2277,6 +2785,9 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
             </button>
             <button type="button" className="chat-gif-btn" onClick={(e) => { e.stopPropagation(); setShowGifPicker((v) => !v); }} title="GIFs">
               GIF
+            </button>
+            <button type="button" className="chat-gif-btn" onClick={scheduleMessagePrompt} title="Schedule send">
+              Schedule
             </button>
             {isMobile && (
               <button
@@ -2295,6 +2806,12 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
           </div>
             </div>
           </div>
+          {scheduledAt && (
+            <div className="msg-edit-hint" style={{ marginTop: 6 }}>
+              Scheduled for {new Date(scheduledAt).toLocaleString()}
+              <span className="msg-edit-link" style={{ marginLeft: 8 }} onClick={() => setScheduledAt('')}>clear</span>
+            </div>
+          )}
           {showInputEmoji && (
             <div className="input-emoji-wrap" onClick={(e) => e.stopPropagation()}>
               <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowInputEmoji(false)} serverId={channel?.server} />
@@ -2308,7 +2825,11 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
         </form>
       ) : (
         <div className="chat-input-area chat-no-send chat-input-locked">
-          <div className="chat-no-send-text">You don&apos;t have permission to send messages here.</div>
+          <div className="chat-no-send-text">
+            {isClawDmReadOnly
+              ? 'This DM is read-only. Only Claw can message you.'
+              : 'You don&apos;t have permission to send messages here.'}
+          </div>
         </div>
       )}
       {lightboxSrc && <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}

@@ -45,6 +45,7 @@ export default {
    */
   translateProviderUrl: process.env.TRANSLATE_PROVIDER_URL || '',
   translateProviderApiKey: process.env.TRANSLATE_PROVIDER_API_KEY || '',
+  googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || '',
 
   /** First-party product analytics (MongoDB + POST /analytics/batch). Set ANALYTICS_ENABLED=false to no-op ingest. */
   analyticsEnabled: process.env.ANALYTICS_ENABLED !== 'false',
@@ -61,4 +62,7 @@ export default {
     16384,
     Math.max(512, parseInt(process.env.ANALYTICS_MAX_PROPS_BYTES || '8192', 10) || 8192),
   ),
+
+  /** Opic Cloud: per-user storage quota in bytes. Default 500 MB. Override with OPIC_CLOUD_QUOTA_BYTES. */
+  opicCloudDefaultQuotaBytes: parseInt(process.env.OPIC_CLOUD_QUOTA_BYTES || String(500 * 1024 * 1024), 10) || 500 * 1024 * 1024,
 };

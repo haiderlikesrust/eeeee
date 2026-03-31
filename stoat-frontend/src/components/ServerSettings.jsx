@@ -135,6 +135,38 @@ function RoleAssignDropdown({ assignableRoles, onSelect }) {
   );
 }
 
+const ROLE_TEMPLATES = {
+  admin: {
+    name: 'Admin',
+    colour: '#ef4444',
+    permissions: Permissions.ADMINISTRATOR,
+  },
+  mod: {
+    name: 'Moderator',
+    colour: '#f59e0b',
+    permissions:
+      Permissions.READ_MESSAGES |
+      Permissions.SEND_MESSAGES |
+      Permissions.MANAGE_MESSAGES |
+      Permissions.KICK_MEMBERS |
+      Permissions.BAN_MEMBERS |
+      Permissions.MANAGE_NICKNAMES |
+      Permissions.CREATE_INVITES |
+      Permissions.ATTACH_FILES |
+      Permissions.ADD_REACTIONS |
+      Permissions.CONNECT_VOICE |
+      Permissions.SPEAK_VOICE |
+      Permissions.MUTE_MEMBERS |
+      Permissions.DEAFEN_MEMBERS |
+      Permissions.SEND_VOICE_MESSAGE,
+  },
+  muted: {
+    name: 'Muted',
+    colour: '#6b7280',
+    permissions: Permissions.READ_MESSAGES,
+  },
+};
+
 export default function ServerSettings({ server, serverId, onClose, onUpdated, userPerms }) {
   const { user } = useAuth();
   const toast = useToast();
@@ -454,6 +486,29 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
       toast.success('Role created');
     } catch (err) {
       toast.error(getErrMsg(err, 'Failed to create role'));
+    }
+  };
+
+  const createRoleFromTemplate = async (templateKey) => {
+    const template = ROLE_TEMPLATES[templateKey];
+    if (!template) return;
+    const lowestRank = roles.length > 0 ? Math.min(...roles.map((r) => r.rank)) : 0;
+    const existingNames = new Set(roles.map((r) => String(r.name || '').toLowerCase()));
+    let roleName = template.name;
+    if (existingNames.has(roleName.toLowerCase())) {
+      roleName = `${template.name}-${Math.floor(Math.random() * 900 + 100)}`;
+    }
+    try {
+      await post(`/servers/${serverId}/roles`, {
+        name: roleName,
+        colour: template.colour || null,
+        rank: lowestRank - 1,
+        permissions: coerceConsistentServerPermissions(template.permissions),
+      });
+      await fetchRoles();
+      toast.success(`${template.name} template created`);
+    } catch (err) {
+      toast.error(getErrMsg(err, `Failed to create ${template.name} template`));
     }
   };
 
@@ -916,6 +971,12 @@ export default function ServerSettings({ server, serverId, onClose, onUpdated, u
                 <input type="color" className="role-color-picker" value={newRoleColor} onChange={(e) => setNewRoleColor(e.target.value)} title="Role color" />
                 <input value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} placeholder="New role name" onKeyDown={(e) => e.key === 'Enter' && createRole()} />
                 <button className="modal-btn primary" onClick={createRole}>Create</button>
+              </div>
+              <div className="role-template-row">
+                <span className="role-template-label">Quick templates</span>
+                <button className="modal-btn secondary" onClick={() => createRoleFromTemplate('admin')}>Admin</button>
+                <button className="modal-btn secondary" onClick={() => createRoleFromTemplate('mod')}>Mod</button>
+                <button className="modal-btn secondary" onClick={() => createRoleFromTemplate('muted')}>Muted</button>
               </div>
               {roles.length === 0 && <p className="settings-empty">No custom roles</p>}
               <div className="role-hierarchy-list">

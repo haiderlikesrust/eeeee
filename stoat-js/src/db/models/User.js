@@ -88,6 +88,10 @@ const userSchema = new mongoose.Schema({
   presence_api_token: { type: String },
   /** When API activity should auto-clear if not refreshed (script stopped). */
   presence_api_expires_at: { type: Date, default: null },
+  /** Opic Cloud: total bytes currently stored by this user. */
+  cloud_bytes_used: { type: Number, default: 0 },
+  /** Opic Cloud: optional per-user quota override (bytes). Omit to use server default. */
+  cloud_quota_bytes: { type: Number },
 }, { id: false, timestamps: false });
 
 userSchema.index({ username: 1, discriminator: 1 }, { unique: true });

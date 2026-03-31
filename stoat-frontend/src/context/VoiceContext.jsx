@@ -9,6 +9,22 @@ const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
+const CLIP_CONSENT_KEY = 'opic.voice.clipConsentEnabled';
+const CLIP_WINDOW_MS = 30_000;
+
+function safeGetClipConsentDefault() {
+  try {
+    return localStorage.getItem(CLIP_CONSENT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function safeSetClipConsent(value) {
+  try {
+    localStorage.setItem(CLIP_CONSENT_KEY, value ? '1' : '0');
+  } catch {}
+}
 
 export function VoiceProvider({ children }) {
   const { on, send } = useWS();
@@ -27,6 +43,7 @@ export function VoiceProvider({ children }) {
   const [remoteCameraStreams, setRemoteCameraStreams] = useState({});
   const [speakingUserIds, setSpeakingUserIds] = useState(() => new Set());
   const [channelActiveSince, setChannelActiveSince] = useState({}); // channelId -> timestamp when channel became non-empty
+  const [clipConsentEnabled, setClipConsentEnabledState] = useState(() => safeGetClipConsentDefault());
 
   const peersRef = useRef(new Map());
   const localStreamRef = useRef(null);
@@ -36,6 +53,143 @@ export function VoiceProvider({ children }) {
   const audioStreamsRef = useRef(new Map()); // remoteUserId -> MediaStream for playback (keeps all received audio tracks)
   const speakingAnalyserRef = useRef(new Map()); // remoteUserId -> { intervalId, context }
   const screenStreamIdsRef = useRef(new Set()); // stream IDs that are screen shares (not camera)
+  const clipAudioContextRef = useRef(null);
+  const clipDestinationRef = useRef(null);
+  const clipSourceNodesRef = useRef(new Map()); // key -> { source, gain }
+  const clipRecorderRef = useRef(null);
+  const clipChunksRef = useRef([]); // [{ at:number, chunk:Blob }]
+
+  const clipSupported = typeof MediaRecorder !== 'undefined';
+
+  const setClipConsentEnabled = useCallback((enabled) => {
+    setClipConsentEnabledState(Boolean(enabled));
+    safeSetClipConsent(Boolean(enabled));
+  }, []);
+
+  const stopClipRecorder = useCallback(() => {
+    try {
+      if (clipRecorderRef.current && clipRecorderRef.current.state !== 'inactive') {
+        clipRecorderRef.current.stop();
+      }
+    } catch {}
+    clipRecorderRef.current = null;
+    clipChunksRef.current = [];
+  }, []);
+
+  const teardownClipGraph = useCallback(() => {
+    for (const [, node] of clipSourceNodesRef.current.entries()) {
+      try { node.source.disconnect(); } catch {}
+      try { node.gain.disconnect(); } catch {}
+    }
+    clipSourceNodesRef.current.clear();
+    if (clipAudioContextRef.current) {
+      try { clipAudioContextRef.current.close(); } catch {}
+    }
+    clipAudioContextRef.current = null;
+    clipDestinationRef.current = null;
+  }, []);
+
+  const syncClipSources = useCallback(() => {
+    if (!clipConsentEnabled) return;
+    if (!currentChannelIdRef.current) return;
+    if (!clipAudioContextRef.current || !clipDestinationRef.current) return;
+    const ctx = clipAudioContextRef.current;
+    const dest = clipDestinationRef.current;
+
+    const desired = new Map();
+    if (localStreamRef.current) desired.set('local', localStreamRef.current);
+    for (const [uid, stream] of audioStreamsRef.current.entries()) {
+      if (stream) desired.set(`remote:${uid}`, stream);
+    }
+
+    // Remove stale sources
+    for (const [key, node] of clipSourceNodesRef.current.entries()) {
+      if (!desired.has(key)) {
+        try { node.source.disconnect(); } catch {}
+        try { node.gain.disconnect(); } catch {}
+        clipSourceNodesRef.current.delete(key);
+      }
+    }
+
+    // Add new sources
+    for (const [key, stream] of desired.entries()) {
+      if (clipSourceNodesRef.current.has(key)) continue;
+      try {
+        const source = ctx.createMediaStreamSource(stream);
+        const gain = ctx.createGain();
+        gain.gain.value = 1;
+        source.connect(gain);
+        gain.connect(dest);
+        clipSourceNodesRef.current.set(key, { source, gain });
+      } catch {}
+    }
+  }, [clipConsentEnabled]);
+
+  const ensureClipRecorderRunning = useCallback(async () => {
+    if (!clipSupported || !clipConsentEnabled) return;
+    if (!currentChannelIdRef.current) return;
+    if (clipRecorderRef.current && clipRecorderRef.current.state !== 'inactive') return;
+
+    if (!clipAudioContextRef.current) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const dest = ctx.createMediaStreamDestination();
+      clipAudioContextRef.current = ctx;
+      clipDestinationRef.current = dest;
+    }
+    if (clipAudioContextRef.current?.state === 'suspended') {
+      try { await clipAudioContextRef.current.resume(); } catch {}
+    }
+    syncClipSources();
+    const dest = clipDestinationRef.current;
+    if (!dest || dest.stream.getAudioTracks().length === 0) return;
+    const mimeCandidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+    let mimeType = '';
+    for (const c of mimeCandidates) {
+      try {
+        if (MediaRecorder.isTypeSupported(c)) { mimeType = c; break; }
+      } catch {}
+    }
+    try {
+      const rec = new MediaRecorder(dest.stream, mimeType ? { mimeType } : undefined);
+      rec.ondataavailable = (e) => {
+        if (!e?.data || e.data.size === 0) return;
+        const now = Date.now();
+        clipChunksRef.current.push({ at: now, chunk: e.data });
+        clipChunksRef.current = clipChunksRef.current.filter((row) => now - row.at <= CLIP_WINDOW_MS + 5000);
+      };
+      rec.onerror = () => {};
+      rec.start(1000);
+      clipRecorderRef.current = rec;
+    } catch {}
+  }, [clipConsentEnabled, clipSupported, syncClipSources]);
+
+  const clipLast30Seconds = useCallback(async () => {
+    if (!clipSupported) throw new Error('Clipping is not supported in this browser.');
+    if (!clipConsentEnabled) throw new Error('Enable clipping consent first.');
+    if (!currentChannelIdRef.current) throw new Error('Join voice first.');
+    await ensureClipRecorderRunning();
+    // On the first clip attempt, recorder may have just started and not emitted a chunk yet.
+    // Try to flush current data and wait briefly before failing.
+    if (clipChunksRef.current.length === 0) {
+      const rec = clipRecorderRef.current;
+      if (rec && rec.state === 'recording') {
+        try { rec.requestData(); } catch {}
+      }
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    let now = Date.now();
+    let recent = clipChunksRef.current.filter((row) => now - row.at <= CLIP_WINDOW_MS);
+    if (!recent.length) {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      now = Date.now();
+      recent = clipChunksRef.current.filter((row) => now - row.at <= CLIP_WINDOW_MS);
+    }
+    if (!recent.length) throw new Error('No recent audio buffered yet.');
+    const mimeType = recent[recent.length - 1]?.chunk?.type || 'audio/webm';
+    return new Blob(recent.map((r) => r.chunk), { type: mimeType });
+  }, [clipConsentEnabled, clipSupported, ensureClipRecorderRunning]);
 
   const cleanup = useCallback(() => {
     for (const [, data] of speakingAnalyserRef.current.entries()) {
@@ -70,11 +224,13 @@ export function VoiceProvider({ children }) {
       cameraStreamRef.current.getTracks().forEach((t) => t.stop());
       cameraStreamRef.current = null;
     }
+    stopClipRecorder();
+    teardownClipGraph();
     setSharingScreen(false);
     setCameraOn(false);
     setRemoteScreenStreams({});
     setRemoteCameraStreams({});
-  }, []);
+  }, [stopClipRecorder, teardownClipGraph]);
 
   const renegotiatePeer = useCallback(async (remoteUserId, channelId) => {
     const pc = peersRef.current.get(remoteUserId);
@@ -229,6 +385,8 @@ export function VoiceProvider({ children }) {
         }
         audio.srcObject = playbackStream;
         audio.play().catch(() => {});
+        void ensureClipRecorderRunning();
+        syncClipSources();
       }
     };
 
@@ -242,6 +400,7 @@ export function VoiceProvider({ children }) {
         }
         audioElementsRef.current.delete(remoteUserId);
         audioStreamsRef.current.delete(remoteUserId);
+        syncClipSources();
         pc.close();
         peersRef.current.delete(remoteUserId);
         setRemoteScreenStreams((prev) => {
@@ -288,12 +447,20 @@ export function VoiceProvider({ children }) {
     }
 
     return pc;
-  }, [send]);
+  }, [send, ensureClipRecorderRunning, syncClipSources]);
 
   const joinVoice = useCallback(async (channelId, channelName, serverId, serverName) => {
+    const previousChannelId = currentChannelIdRef.current;
     if (currentChannel) {
       send({ type: 'VoiceLeave' });
       cleanup();
+      if (previousChannelId && user?._id) {
+        setVoiceMembers((prev) => {
+          const existing = Array.isArray(prev?.[previousChannelId]) ? prev[previousChannelId] : [];
+          const nextMembers = existing.filter((id) => id !== user._id);
+          return { ...prev, [previousChannelId]: nextMembers };
+        });
+      }
     }
 
     try {
@@ -305,16 +472,54 @@ export function VoiceProvider({ children }) {
     }
 
     setCurrentChannel({ id: channelId, name: channelName, serverId, serverName });
+    // Keep ref in sync immediately so clip initialization in this tick works.
+    currentChannelIdRef.current = channelId;
+    // Optimistic local presence so UI updates instantly even if VoiceStateUpdate is delayed.
+    setVoiceMembers((prev) => {
+      const existing = Array.isArray(prev?.[channelId]) ? prev[channelId] : [];
+      if (user?._id && existing.includes(user._id)) return prev;
+      return { ...prev, [channelId]: user?._id ? [...existing, user._id] : existing };
+    });
+    setChannelActiveSince((prev) => ({
+      ...prev,
+      [channelId]: prev?.[channelId] ?? Date.now(),
+    }));
     send({ type: 'VoiceJoin', channelId });
     playSelfJoin();
-  }, [currentChannel, send, cleanup]);
+    void ensureClipRecorderRunning();
+    syncClipSources();
+  }, [currentChannel, send, cleanup, user?._id]);
 
   const leaveVoice = useCallback(() => {
+    const prevChannelId = currentChannelIdRef.current;
     playSelfLeave();
     send({ type: 'VoiceLeave' });
     cleanup();
     setCurrentChannel(null);
-  }, [send, cleanup]);
+    if (prevChannelId && user?._id) {
+      setVoiceMembers((prev) => {
+        const existing = Array.isArray(prev?.[prevChannelId]) ? prev[prevChannelId] : [];
+        const nextMembers = existing.filter((id) => id !== user._id);
+        return { ...prev, [prevChannelId]: nextMembers };
+      });
+    }
+  }, [send, cleanup, user?._id]);
+
+  useEffect(() => {
+    if (!clipConsentEnabled) {
+      stopClipRecorder();
+      teardownClipGraph();
+      return;
+    }
+    void ensureClipRecorderRunning();
+    syncClipSources();
+  }, [clipConsentEnabled, ensureClipRecorderRunning, stopClipRecorder, teardownClipGraph, syncClipSources]);
+
+  useEffect(() => {
+    if (!clipConsentEnabled || !currentChannel?.id) return;
+    void ensureClipRecorderRunning();
+    syncClipSources();
+  }, [clipConsentEnabled, currentChannel?.id, ensureClipRecorderRunning, syncClipSources]);
 
   const stopScreenShare = useCallback(() => {
     if (!screenStreamRef.current || !currentChannel) return;
@@ -571,6 +776,10 @@ export function VoiceProvider({ children }) {
       stopScreenShare,
       startCamera,
       stopCamera,
+      clipSupported,
+      clipConsentEnabled,
+      setClipConsentEnabled,
+      clipLast30Seconds,
     }),
     [
       currentChannel,
@@ -591,6 +800,10 @@ export function VoiceProvider({ children }) {
       stopScreenShare,
       startCamera,
       stopCamera,
+      clipSupported,
+      clipConsentEnabled,
+      setClipConsentEnabled,
+      clipLast30Seconds,
     ]
   );
 

@@ -3,6 +3,18 @@ import { useAuth } from './AuthContext';
 import { useWS } from './WebSocketContext';
 
 const NotificationContext = createContext(null);
+const CHANNEL_NOTIFICATION_PRESETS_KEY = 'opic.channelNotificationPresets.v1';
+
+function readChannelNotificationPresets() {
+  try {
+    const raw = localStorage.getItem(CHANNEL_NOTIFICATION_PRESETS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 // Notification sound — generate a short beep via Web Audio API
 function playNotificationSound() {
@@ -48,6 +60,12 @@ export function NotificationProvider({ children }) {
       if (!data || !user) return;
       const authorId = typeof data.author === 'object' ? data.author?._id : data.author;
       if (authorId === user._id) return;
+      const presets = readChannelNotificationPresets();
+      const preset = String(presets?.[data.channel] || 'all');
+      const mentionsMe = String(data.content || '').toLowerCase().includes(`@${String(user.username || '').toLowerCase()}`)
+        || String(data.content || '').includes(`<@${user._id}>`);
+      if (preset === 'none') return;
+      if (preset === 'mentions' && !mentionsMe) return;
       if (data.channel === activeChannelRef.current && document.hasFocus()) return;
 
       const authorName = typeof data.author === 'object'

@@ -4,7 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { useMobile } from '../context/MobileContext';
 import { useOfeed } from '../context/OfeedContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
-import { get } from '../api';
+import { get, post, uploadFile } from '../api';
+import { extensionForVoiceMime, withVoiceMetadata } from '../utils/voiceMessage';
 import './VoiceChannelView.css';
 
 export default function VoiceChannelView({ channel }) {
@@ -37,6 +38,8 @@ export default function VoiceChannelView({ channel }) {
   const [memberUsers, setMemberUsers] = useState({});
   const [expandedScreenUserId, setExpandedScreenUserId] = useState(null);
   const [focusedScreenUserId, setFocusedScreenUserId] = useState(null);
+  const [clipping, setClipping] = useState(false);
+  const [clipMsg, setClipMsg] = useState('');
 
   useEffect(() => {
     if (expandedScreenUserId == null) return;
@@ -86,6 +89,32 @@ export default function VoiceChannelView({ channel }) {
   const myCameraTile = isConnected && cameraOn && localCameraStream ? [{ userId: user?._id, stream: localCameraStream, isMe: true }] : [];
   const remoteCameraTiles = Object.entries(remoteCameraStreams || {}).map(([uid, stream]) => ({ userId: uid, stream, isMe: uid === user?._id }));
   const cameraTiles = [...myCameraTile, ...remoteCameraTiles.filter((t) => t.userId !== user?._id)];
+
+  const handleShareClip = async () => {
+    if (!isConnected || !channel?._id || clipping) return;
+    if (!voice?.clipConsentEnabled) {
+      setClipMsg('Enable clipping consent first.');
+      return;
+    }
+    setClipping(true);
+    setClipMsg('');
+    try {
+      const blob = await voice.clipLast30Seconds();
+      const mime = blob?.type || 'audio/webm';
+      const ext = extensionForVoiceMime(mime);
+      const file = new File([blob], `voice-message.${ext}`, { type: mime || `audio/${ext}` });
+      const uploaded = await uploadFile(file);
+      const att = withVoiceMetadata(uploaded, file);
+      await post(`/channels/${channel._id}/voice-clip/dm`, {
+        attachment: att,
+      });
+      setClipMsg('Clip sent to your DMs by Claw.');
+    } catch (err) {
+      setClipMsg(err?.message || 'Failed to create clip.');
+    } finally {
+      setClipping(false);
+    }
+  };
 
   return (
     <div className="voice-view">
@@ -283,6 +312,23 @@ export default function VoiceChannelView({ channel }) {
               )}
               <span>{deafened ? 'Undeafen' : 'Deafen'}</span>
             </button>
+            <button
+              className={`voice-footer-btn ${voice?.clipConsentEnabled ? 'active' : ''}`}
+              onClick={() => voice?.setClipConsentEnabled?.(!voice?.clipConsentEnabled)}
+              title="Consent to 30s VC clipping"
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1 5h2v6h-2V7zm0 8h2v2h-2v-2z"/></svg>
+              <span>{voice?.clipConsentEnabled ? 'Clipping On' : 'Clipping Off'}</span>
+            </button>
+            <button
+              className="voice-footer-btn"
+              onClick={handleShareClip}
+              disabled={clipping || !voice?.clipSupported || !voice?.clipConsentEnabled}
+              title={!voice?.clipSupported ? 'Browser does not support clipping' : 'Share last 30s clip'}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3v10.55a4 4 0 102 3.45V7h4V3h-6z"/></svg>
+              <span>{clipping ? 'Clipping...' : 'Clip 30s'}</span>
+            </button>
             <button className="voice-footer-btn disconnect" onClick={leaveVoice}>
               <svg width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
               <span>Disconnect</span>
@@ -295,6 +341,9 @@ export default function VoiceChannelView({ channel }) {
             </svg>
             Join Voice Channel
           </button>
+        )}
+        {isConnected && clipMsg && (
+          <div className="voice-clip-status" role="status">{clipMsg}</div>
         )}
       </div>
     </div>

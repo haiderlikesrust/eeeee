@@ -6,6 +6,7 @@ import User from './db/models/User.js';
 import app from './app.js';
 import { createEventServer } from './events.js';
 import { startPresenceApiExpiry } from './presenceApiExpiry.js';
+import { startRoomCleanup } from './roomCleanup.js';
 import { ensureOfficialClawUser } from './officialClaw.js';
 import { ensureOpicStaffBadge } from './opicStaffBadge.js';
 import logger from './logger.js';
@@ -19,6 +20,7 @@ async function main() {
     logger.error({ err, msg: 'Failed to ensure Opic Staff badge' });
   });
   startPresenceApiExpiry();
+  startRoomCleanup();
 
   // Remove old unique index on username alone (we use username+discriminator now)
   await mongoose.connection.db.collection('users').dropIndex('username_1').catch(() => {});

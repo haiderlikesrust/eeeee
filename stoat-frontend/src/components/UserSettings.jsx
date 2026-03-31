@@ -7,6 +7,7 @@ import {
 } from '../analytics/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { useOnboarding } from '../context/OnboardingContext';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import ProfileCard from './ProfileCard';
 import './UserSettings.css';
@@ -37,6 +38,22 @@ function SettingsSelect({ value, onChange, options, className = '' }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+function RestartTourTab({ onClose }) {
+  const ob = useOnboarding();
+  if (!ob) return null;
+  return (
+    <div
+      className="settings-tab"
+      onClick={() => {
+        ob.startTour();
+        onClose?.();
+      }}
+    >
+      Restart App Tour
     </div>
   );
 }
@@ -242,12 +259,22 @@ export default function UserSettings({ onClose }) {
             className="settings-tab"
             onClick={() => {
               onClose?.();
-              navigate('/developers');
+              navigate('/cloud');
+            }}
+          >
+            Opic Cloud
+          </div>
+          <div
+            className="settings-tab"
+            onClick={() => {
+              onClose?.();
+              navigate('/developers/docs/api');
             }}
           >
             Developer Portal
           </div>
           <div className="settings-separator" />
+          <RestartTourTab onClose={onClose} />
           <div className="settings-tab close-tab" onClick={onClose}>
             <svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
             Close
@@ -373,7 +400,7 @@ export default function UserSettings({ onClose }) {
               </label>
               <p className="settings-hint">
                 Playing / listening / streaming activity is set via HTTP using a personal token.{' '}
-                <Link to="/developers" className="settings-dev-portal-link">Open Developer Portal — Rich presence API</Link>
+                <Link to="/developers/docs/api" className="settings-dev-portal-link">Open Developer Portal — Rich presence API</Link>
                 {' '}to create or revoke your token and view examples.
               </p>
               <label className="auth-label">

@@ -1,0 +1,233 @@
+/* ── Onboarding Overlay ─────────────────────────────── */
+
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  pointer-events: none;
+}
+
+.onboarding-overlay > * {
+  pointer-events: auto;
+}
+
+.onboarding-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1;
+}
+
+.onboarding-spotlight-svg {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+}
+
+/* ── Tooltip card ──────────────────────────────────── */
+
+.onboarding-tooltip {
+  position: fixed;
+  z-index: 2;
+  background: var(--bg-primary, #2b2d31);
+  border: 1px solid var(--border-subtle, #3f4147);
+  border-radius: 12px;
+  padding: 20px 24px 16px;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  animation: onboarding-fadein 0.22s ease;
+}
+
+.onboarding-tooltip--center {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes onboarding-fadein {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.onboarding-tooltip--center {
+  animation: onboarding-fadein-center 0.22s ease;
+}
+@keyframes onboarding-fadein-center {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── Step dots ─────────────────────────────────────── */
+
+.onboarding-step-indicator {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.onboarding-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted, #72767d);
+  transition: background 0.18s;
+}
+
+.onboarding-dot.active {
+  background: var(--accent, #5865f2);
+  transform: scale(1.25);
+}
+
+.onboarding-dot.done {
+  background: var(--accent, #5865f2);
+  opacity: 0.5;
+}
+
+/* ── Text ──────────────────────────────────────────── */
+
+.onboarding-title {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary, #f2f3f5);
+}
+
+.onboarding-body {
+  margin: 0 0 16px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-secondary, #b5bac1);
+}
+
+/* ── Buttons ───────────────────────────────────────── */
+
+.onboarding-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.onboarding-nav-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.onboarding-skip-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted, #72767d);
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.onboarding-skip-btn:hover {
+  color: var(--text-primary, #f2f3f5);
+  background: var(--bg-tertiary, #1e1f22);
+}
+
+.onboarding-back-btn {
+  background: var(--bg-tertiary, #1e1f22);
+  border: none;
+  color: var(--text-primary, #f2f3f5);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.onboarding-back-btn:hover {
+  background: var(--bg-secondary, #2b2d31);
+}
+
+.onboarding-next-btn {
+  background: var(--accent, #5865f2);
+  border: none;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 8px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.onboarding-next-btn:hover {
+  background: #4752c4;
+}
+
+/* ── Create-server inline form ─────────────────────── */
+
+.onboarding-create-server {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.onboarding-server-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle, #3f4147);
+  background: var(--bg-tertiary, #1e1f22);
+  color: var(--text-primary, #f2f3f5);
+  font-size: 0.92rem;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+.onboarding-server-input:focus {
+  border-color: var(--accent, #5865f2);
+}
+
+.onboarding-server-input::placeholder {
+  color: var(--text-muted, #72767d);
+}
+
+.onboarding-create-btn {
+  align-self: flex-end;
+  background: var(--accent, #5865f2);
+  border: none;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 8px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.onboarding-create-btn:hover:not(:disabled) {
+  background: #4752c4;
+}
+
+.onboarding-create-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.onboarding-create-error {
+  color: #f04747;
+  font-size: 0.82rem;
+}
+
+/* ── Mobile adjustments ────────────────────────────── */
+
+@media (max-width: 768px) {
+  .onboarding-tooltip {
+    width: auto;
+    left: 16px !important;
+    right: 16px !important;
+    top: auto !important;
+    bottom: 80px !important;
+    transform: none !important;
+    max-width: calc(100vw - 32px);
+  }
+}

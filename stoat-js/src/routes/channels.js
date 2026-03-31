@@ -3,6 +3,7 @@ import { ulid } from 'ulid';
 import crypto from 'crypto';
 import {
   Channel, Message, Member, User, Invite, Webhook, ChannelUnread, Server, Bot, WhiteboardSession, Interaction,
+  Room, MinigameSession, CloudFile,
 } from '../db/models/index.js';
 import { createRoom } from '../whiteboardRooms.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -21,6 +22,7 @@ import { postBotInteraction } from '../slash/botInteraction.js';
 import { getOfficialClawUserId } from '../officialClaw.js';
 import { translateMessageContent } from '../translate.js';
 import { recordServerEvent } from '../analytics/service.js';
+import { postOfficialClawDmMessage } from '../clawMessaging.js';
 
 const router = Router();
 
@@ -41,6 +43,30 @@ function isBotUser(user) {
   return typeof owner === 'string' && owner.trim().length > 0;
 }
 
+/** Link uploaded attachments to first message (Opic Cloud deep links). */
+async function linkCloudFilesToFirstMessage(attachments, channelDoc, messageId, userId) {
+  if (!Array.isArray(attachments) || attachments.length === 0 || !userId || !channelDoc?._id) return;
+  const channelId = String(channelDoc._id);
+  const serverId = channelDoc.server ? String(channelDoc.server) : null;
+  await Promise.all(
+    attachments.map(async (att) => {
+      const id = att?._id;
+      if (!id || typeof id !== 'string') return;
+      await CloudFile.updateOne(
+        { _id: id, owner: userId, message_id: null },
+        { $set: { channel_id: channelId, message_id: String(messageId), server_id: serverId } },
+      );
+    }),
+  );
+}
+
+async function isRoomMember(serverId, userId) {
+  const room = await Room.findById(serverId).lean();
+  if (!room || room.status !== 'active') return null;
+  if ((room.members || []).map(String).includes(String(userId))) return room;
+  return null;
+}
+
 function canAccessChannel(channel, userId, member) {
   if (channel.channel_type === 'DirectMessage') return (channel.recipients || []).includes(userId);
   if (channel.channel_type === 'TextChannel' || channel.channel_type === 'VoiceChannel' || channel.channel_type === 'Group') return !!member || channel.owner === userId;
@@ -50,14 +76,22 @@ function canAccessChannel(channel, userId, member) {
 }
 
 async function getMember(ch, userId) {
-  if (ch.server) return Member.findOne({ server: ch.server, user: userId });
+  if (!ch.server) return null;
+  const member = await Member.findOne({ server: ch.server, user: userId });
+  if (member) return member;
+  const room = await isRoomMember(ch.server, userId);
+  if (room) return { _id: `room:${userId}`, server: ch.server, user: userId, _isRoomMember: true };
   return null;
 }
 
 async function getChannelPerms(ch, userId) {
   if (!ch.server) return null;
   const server = await Server.findById(ch.server);
-  if (!server) return null;
+  if (!server) {
+    const room = await isRoomMember(ch.server, userId);
+    if (room) return { perms: ALL_PERMISSIONS, server: null, member: null, isRoom: true };
+    return null;
+  }
   const member = await Member.findOne({ server: ch.server, user: userId });
   if (!member) return null;
   return { perms: computeChannelPermissions(server, member, ch), server, member };
@@ -439,6 +473,16 @@ router.get('/:target', authMiddleware(), async (req, res) => {
   const member = await getMember(ch, req.userId);
   if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
   const out = { ...ch };
+  const clawId = getOfficialClawUserId();
+  if (
+    ch.channel_type === 'DirectMessage'
+    && Array.isArray(ch.recipients)
+    && ch.recipients.includes(clawId)
+    && req.userId !== clawId
+  ) {
+    out.read_only_for_user = true;
+    out.read_only_reason = 'claw_dm_locked';
+  }
   if (ch.channel_type === 'DirectMessage' && Array.isArray(ch.recipients)) {
     const otherId = ch.recipients.find((r) => r !== req.userId);
     if (otherId) {
@@ -457,7 +501,11 @@ router.get('/:target/permissions', authMiddleware(), async (req, res) => {
   if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
   if (!ch.server) return res.json({ permissions: ALL_PERMISSIONS });
   const server = await Server.findById(ch.server).lean();
-  if (!server) return res.json({ permissions: 0 });
+  if (!server) {
+    const room = await isRoomMember(ch.server, req.userId);
+    if (room) return res.json({ permissions: ALL_PERMISSIONS });
+    return res.json({ permissions: 0 });
+  }
   /** Server owner always has full channel permissions (matches computeChannelPermissions owner branch). */
   if (sameId(server.owner, req.userId)) {
     return res.json({ permissions: ALL_PERMISSIONS });
@@ -512,6 +560,7 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
   const ch = await Channel.findById(req.params.target);
   if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
   const member = await getMember(ch, req.userId);
+  if (member?._isRoomMember) return res.status(403).json({ type: 'Forbidden', error: 'Room channels cannot be edited directly' });
   if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
   if (ch.server) {
     const ctx = await getChannelPerms(ch, req.userId);
@@ -539,6 +588,10 @@ router.patch('/:target', authMiddleware(), async (req, res) => {
 router.delete('/:target', authMiddleware(), async (req, res) => {
   const ch = await Channel.findById(req.params.target);
   if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  if (ch.server) {
+    const roomCheck = await Room.findById(ch.server).lean();
+    if (roomCheck) return res.status(403).json({ type: 'Forbidden', error: 'Room channels cannot be deleted directly' });
+  }
   const server = ch.server ? await Server.findById(ch.server) : null;
   if (ch.server) {
     const ctx = await getChannelPerms(ch, req.userId);
@@ -657,6 +710,26 @@ router.get('/:target/messages/:msg', authMiddleware(), async (req, res) => {
   res.json(messageToJson(msg, { [msg.author]: author }));
 });
 
+// GET /channels/:target/messages/:msg/history
+router.get('/:target/messages/:msg/history', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+  const msg = await Message.findOne({ _id: req.params.msg, channel: ch._id }).lean();
+  if (!msg) return res.status(404).json({ type: 'NotFound', error: 'Message not found' });
+  const history = Array.isArray(msg.edit_history) ? msg.edit_history : [];
+  res.json({
+    message_id: msg._id,
+    current_content: msg.content || '',
+    history: history.map((h, idx) => ({
+      index: idx,
+      content: String(h?.content || ''),
+      edited_at: h?.edited_at || null,
+    })),
+  });
+});
+
 // GET /channels/:target/messages/:msg/translate?lang=es
 router.get('/:target/messages/:msg/translate', authMiddleware(), async (req, res) => {
   const ch = await Channel.findById(req.params.target);
@@ -721,6 +794,18 @@ router.get('/:target/messages/:msg/translate', authMiddleware(), async (req, res
 router.post('/:target/messages', authMiddleware(), async (req, res) => {
   const ch = await Channel.findById(req.params.target);
   if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  const clawId = getOfficialClawUserId();
+  if (
+    ch.channel_type === 'DirectMessage'
+    && Array.isArray(ch.recipients)
+    && ch.recipients.includes(clawId)
+    && req.userId !== clawId
+  ) {
+    return res.status(403).json({
+      type: 'Forbidden',
+      error: 'You cannot send direct messages to Claw.',
+    });
+  }
   let member = await getMember(ch, req.userId);
   // Threads: if no server member (e.g. thread has no server), check parent channel access
   if (ch.channel_type === 'Thread' && !member && ch.parent_channel) {
@@ -732,7 +817,7 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
   } else if (!canAccessChannel(ch, req.userId, member)) {
     return res.status(403).json({ type: 'Forbidden', error: 'No access' });
   }
-  if (ch.server) {
+  if (ch.server && !member?._isRoomMember) {
     const ctx = await getChannelPerms(ch, req.userId);
     if (ctx && !hasPermission(ctx.perms, Permissions.SEND_MESSAGES)) {
       return res.status(403).json({ type: 'Forbidden', error: 'Missing SEND_MESSAGES permission' });
@@ -942,6 +1027,123 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
         })
         .catch(() => {});
     }
+    return;
+  }
+
+  if (slashOnly && parsedSlash.name === 'minigame') {
+    const clawId = getOfficialClawUserId();
+    const gameName = (parsedSlash.args || '').trim().toLowerCase();
+    const SUPPORTED_GAMES = ['geoguesser'];
+    if (!SUPPORTED_GAMES.includes(gameName)) {
+      const msgId = ulid();
+      await Message.create({ _id: msgId, channel: ch._id, author: req.userId, content: contentStr, attachments: [], embeds: [], mentions: [], replies: replyIds, nonce: req.body?.nonce });
+      ch.last_message_id = msgId;
+      await ch.save();
+      const clawMsgId = ulid();
+      const clawMsg = await Message.create({ _id: clawMsgId, channel: ch._id, author: clawId, content: `**Available minigames:** ${SUPPORTED_GAMES.join(', ')}\nUsage: \`/minigame geoguesser\``, embeds: [], mentions: [], replies: [] });
+      ch.last_message_id = clawMsgId;
+      await ch.save();
+      const author = await User.findById(req.userId).select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations').lean();
+      const userPayload = messageToJson(await Message.findById(msgId), { [req.userId]: author });
+      res.status(201).json(userPayload);
+      void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: userPayload }, { eventIntent: GatewayIntents.GUILD_MESSAGES }).catch(() => {});
+      const clawUser = await User.findById(clawId).select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations').lean();
+      const clawPayload = messageToJson(clawMsg, { [clawId]: clawUser });
+      void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: clawPayload }, { eventIntent: GatewayIntents.GUILD_MESSAGES }).catch(() => {});
+      return;
+    }
+
+    if (gameName === 'geoguesser') {
+      const msgId = ulid();
+      await Message.create({
+        _id: msgId,
+        channel: ch._id,
+        author: req.userId,
+        content: contentStr,
+        attachments: [],
+        embeds: [],
+        mentions: [],
+        replies: replyIds,
+        nonce: req.body?.nonce,
+      });
+      ch.last_message_id = msgId;
+      await ch.save();
+
+      const clawMsgId = ulid();
+      const clawMsg = await Message.create({
+        _id: clawMsgId,
+        channel: ch._id,
+        author: clawId,
+        content: 'GeoGuesser is currently in **beta** and still being worked on. Please try again soon.',
+        embeds: [],
+        mentions: [],
+        replies: [],
+      });
+      ch.last_message_id = clawMsgId;
+      await ch.save();
+
+      const author = await User.findById(req.userId).select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations').lean();
+      const userPayload = messageToJson(await Message.findById(msgId), { [req.userId]: author });
+      res.status(201).json(userPayload);
+      void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: userPayload }, { eventIntent: GatewayIntents.GUILD_MESSAGES }).catch(() => {});
+      const clawUser = await User.findById(clawId).select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations').lean();
+      const clawPayload = messageToJson(clawMsg, { [clawId]: clawUser });
+      void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: clawPayload }, { eventIntent: GatewayIntents.GUILD_MESSAGES }).catch(() => {});
+      return;
+    }
+
+    const sessionId = ulid();
+    const hostUser = await User.findById(req.userId).select('_id username display_name').lean();
+    const hostName = hostUser?.display_name || hostUser?.username || 'Player';
+    const session = await MinigameSession.create({
+      _id: sessionId,
+      game_type: gameName,
+      channel: ch._id,
+      host: req.userId,
+      players: [{ user: req.userId, username: hostName, score: 0 }],
+      status: 'lobby',
+      total_rounds: 5,
+      round_time_sec: 30,
+    });
+
+    const msgId = ulid();
+    await Message.create({ _id: msgId, channel: ch._id, author: req.userId, content: contentStr, attachments: [], embeds: [], mentions: [], replies: replyIds, nonce: req.body?.nonce });
+    ch.last_message_id = msgId;
+    await ch.save();
+
+    const clawMsgId = ulid();
+    const lobbyEmbed = {
+      type: 'geoguesser_lobby',
+      session_id: sessionId,
+      host: req.userId,
+      players: [{ user: req.userId, username: hostName }],
+      total_rounds: 5,
+      round_time_sec: 30,
+    };
+    const clawMsg = await Message.create({
+      _id: clawMsgId,
+      channel: ch._id,
+      author: clawId,
+      content: `**${hostName}** started a GeoGuesser game! Click **Join** to play.`,
+      embeds: [lobbyEmbed],
+      mentions: [],
+      replies: [],
+    });
+    session.message_id = clawMsgId;
+    await session.save();
+    ch.last_message_id = clawMsgId;
+    await ch.save();
+
+    const author = await User.findById(req.userId).select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations').lean();
+    const userPayload = messageToJson(await Message.findById(msgId), { [req.userId]: author });
+    trackChannelMessageSent(req.userId, ch, { flow: 'minigame_slash' });
+    res.status(201).json(userPayload);
+    void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: userPayload }, { eventIntent: GatewayIntents.GUILD_MESSAGES }).catch(() => {});
+
+    const clawUser = await User.findById(clawId).select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations').lean();
+    const clawPayload = messageToJson(clawMsg, { [clawId]: clawUser });
+    void broadcastToChannel(ch._id, { type: 'MESSAGE_CREATE', d: clawPayload }, { eventIntent: GatewayIntents.GUILD_MESSAGES }).catch(() => {});
+    notifyPushForNewMessage(ch, clawId, clawPayload);
     return;
   }
 
@@ -1158,6 +1360,9 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
   });
   ch.last_message_id = msgId;
   await ch.save();
+  if (attachments.length > 0) {
+    void linkCloudFilesToFirstMessage(attachments, ch, msgId, req.userId).catch(() => {});
+  }
   // HTTP response before WS fan-out so clients are not blocked on Member.find + delivery
   const author = await User.findById(req.userId)
     .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
@@ -1181,6 +1386,33 @@ router.post('/:target/messages', authMiddleware(), async (req, res) => {
         }
       })
       .catch(() => {});
+  }
+});
+
+// POST /channels/:target/voice-clip/dm
+// Send a voice clip as an official Claw DM to the requesting user.
+router.post('/:target/voice-clip/dm', authMiddleware(), async (req, res) => {
+  const ch = await Channel.findById(req.params.target);
+  if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
+  if (ch.channel_type !== 'VoiceChannel') {
+    return res.status(400).json({ type: 'InvalidOperation', error: 'Target must be a voice channel' });
+  }
+  const member = await getMember(ch, req.userId);
+  if (!canAccessChannel(ch, req.userId, member)) {
+    return res.status(403).json({ type: 'Forbidden', error: 'No access' });
+  }
+  const attachment = req.body?.attachment;
+  if (!attachment || typeof attachment !== 'object') {
+    return res.status(400).json({ type: 'InvalidBody', error: 'attachment is required' });
+  }
+  try {
+    const out = await postOfficialClawDmMessage(req.userId, {
+      content: 'Here is your last 30 second VC clip.',
+      attachments: [attachment],
+    });
+    res.json({ ok: true, channel: out.channel, message: out.payload });
+  } catch (err) {
+    res.status(500).json({ type: 'InternalError', error: err?.message || 'Failed to send clip DM' });
   }
 });
 
@@ -1254,7 +1486,20 @@ router.patch('/:target/messages/:msg', authMiddleware(), async (req, res) => {
   if (!msg) return res.status(404).json({ type: 'NotFound', error: 'Message not found' });
   if (msg.author !== req.userId) return res.status(403).json({ type: 'Forbidden', error: 'Not author' });
   const { content } = req.body || {};
-  if (content != null) msg.content = String(content).slice(0, 2000);
+  if (content != null) {
+    const nextContent = String(content).slice(0, 2000);
+    if (nextContent !== String(msg.content || '')) {
+      msg.edit_history = Array.isArray(msg.edit_history) ? msg.edit_history : [];
+      msg.edit_history.push({
+        content: String(msg.content || ''),
+        edited_at: new Date(),
+      });
+      if (msg.edit_history.length > 20) {
+        msg.edit_history = msg.edit_history.slice(msg.edit_history.length - 20);
+      }
+      msg.content = nextContent;
+    }
+  }
   msg.edited = new Date();
   await msg.save();
   const author = await User.findById(msg.author)
@@ -1781,21 +2026,78 @@ router.post('/:target/search', authMiddleware(), async (req, res) => {
   if (!ch) return res.status(404).json({ type: 'NotFound', error: 'Channel not found' });
   const member = await getMember(ch, req.userId);
   if (!canAccessChannel(ch, req.userId, member)) return res.status(403).json({ type: 'Forbidden', error: 'No access' });
-  const query = req.body?.query || '';
+  const query = String(req.body?.query || '');
   const limit = Math.min(Number(req.body?.limit) || 50, 100);
   const q = { channel: ch._id };
-  if (query) q.content = new RegExp(escapeRegex(query), 'i');
+
+  const fromRaw = String(req.body?.from || '').trim();
+  if (fromRaw) {
+    if (fromRaw.toLowerCase() === 'me') {
+      q.author = req.userId;
+    } else {
+      let matchedUserId = null;
+      if (/^[a-z0-9]{20,40}$/i.test(fromRaw)) {
+        matchedUserId = fromRaw;
+      } else {
+        const rx = new RegExp(`^${escapeRegex(fromRaw)}$`, 'i');
+        const u = await User.findOne({ $or: [{ username: rx }, { display_name: rx }] }).select('_id').lean();
+        matchedUserId = u?._id || null;
+      }
+      if (!matchedUserId) return res.json({ messages: [], total: 0 });
+      q.author = matchedUserId;
+    }
+  }
+
+  const hasFile = req.body?.has_file === true || req.body?.hasFile === true;
+  if (hasFile) q['attachments.0'] = { $exists: true };
+
+  const afterRaw = req.body?.after || req.body?.date_from;
+  const beforeRaw = req.body?.before || req.body?.date_to;
+  if (afterRaw || beforeRaw) {
+    q.created_at = {};
+    if (afterRaw) {
+      const d = new Date(afterRaw);
+      if (!Number.isNaN(d.getTime())) q.created_at.$gte = d;
+    }
+    if (beforeRaw) {
+      const d = new Date(beforeRaw);
+      if (!Number.isNaN(d.getTime())) q.created_at.$lte = d;
+    }
+    if (Object.keys(q.created_at).length === 0) delete q.created_at;
+  }
+
+  const tokens = tokenizeSearchQuery(query);
+  if (tokens.length > 0) {
+    q.$and = tokens.map((token) => ({ content: new RegExp(escapeRegex(token), 'i') }));
+  }
+
   const messages = await Message.find(q).sort({ created_at: -1 }).limit(limit).lean();
   const authorIds = [...new Set(messages.map((m) => m.author))];
   const authors = await User.find({ _id: { $in: authorIds } })
     .select('_id username discriminator display_name avatar badges system_badges status profile flags privileged bot relations')
     .lean();
   const authorMap = Object.fromEntries(authors.map((a) => [a._id, a]));
-  res.json(messages.map((m) => messageToJson(m, authorMap)));
+  res.json({
+    messages: messages.map((m) => messageToJson(m, authorMap)),
+    total: messages.length,
+  });
 });
 
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function tokenizeSearchQuery(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return [];
+  const tokens = [];
+  const re = /"([^"]+)"|(\S+)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const token = (m[1] || m[2] || '').trim();
+    if (token) tokens.push(token);
+  }
+  return tokens.slice(0, 12);
 }
 
 // POST /channels/:target/invites

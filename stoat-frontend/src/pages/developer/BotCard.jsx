@@ -1,0 +1,357 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { get, patch, post, uploadFile } from '../../api';
+import { useToast } from '../../context/ToastContext';
+import { resolveFileUrl } from '../../utils/avatarUrl';
+import { INTENTS } from './constants';
+
+function hasIntent(bits, intent) {
+  return (Number(bits || 0) & intent) === intent;
+}
+
+function toggleIntent(bits, intent, enabled) {
+  const n = Number(bits || 0);
+  return enabled ? (n | intent) : (n & ~intent);
+}
+
+export default function BotCard({ bot, ownerServers, onUpdated, onRefresh, onCopyToken }) {
+  const toast = useToast();
+  const [name, setName] = useState(bot?.user?.username || '');
+  const [isPublic, setIsPublic] = useState(!!bot.public);
+  const [discoverable, setDiscoverable] = useState(!!bot.discoverable);
+  const [analytics, setAnalytics] = useState(!!bot.analytics);
+  const [intents, setIntents] = useState(Number(bot.intents || 0));
+  const [selectedServerId, setSelectedServerId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [revealedToken, setRevealedToken] = useState('');
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const [interactionsUrl, setInteractionsUrl] = useState(bot?.interactions_url || '');
+  const [slashCommandsJson, setSlashCommandsJson] = useState(() => JSON.stringify(bot?.slash_commands || [], null, 2));
+  const avatarInputRef = useRef(null);
+  const bannerInputRef = useRef(null);
+
+  useEffect(() => {
+    setName(bot?.user?.username || '');
+    setIsPublic(!!bot.public);
+    setDiscoverable(!!bot.discoverable);
+    setAnalytics(!!bot.analytics);
+    setIntents(Number(bot.intents || 0));
+    setRevealedToken('');
+    setInteractionsUrl(bot?.interactions_url || '');
+    setSlashCommandsJson(JSON.stringify(bot?.slash_commands || [], null, 2));
+  }, [bot]);
+
+  const avatarUrl = resolveFileUrl(bot?.user?.avatar);
+  const bannerUrl = resolveFileUrl(bot?.user?.profile?.banner || bot?.user?.profile?.background);
+
+  const handleAvatarUpload = async (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file) return;
+    setAvatarUploading(true);
+    try {
+      const uploaded = await uploadFile(file);
+      await patch(`/bots/${bot._id}`, { avatar: uploaded });
+      toast.success('Avatar updated');
+      onUpdated();
+    } catch (err) {
+      toast.error(err?.error || 'Failed to update avatar');
+    }
+    setAvatarUploading(false);
+    if (avatarInputRef.current) avatarInputRef.current.value = '';
+  };
+
+  const handleBannerUpload = async (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file) return;
+    setBannerUploading(true);
+    try {
+      const uploaded = await uploadFile(file);
+      await patch(`/bots/${bot._id}`, { profile: { banner: uploaded } });
+      toast.success('Banner updated');
+      onUpdated();
+    } catch (err) {
+      toast.error(err?.error || 'Failed to update banner');
+    }
+    setBannerUploading(false);
+    if (bannerInputRef.current) bannerInputRef.current.value = '';
+  };
+
+  const installableServers = useMemo(
+    () => ownerServers.filter((s) => s && s._id),
+    [ownerServers]
+  );
+
+  const saveSettings = async () => {
+    setSaving(true);
+    let slash_commands;
+    try {
+      slash_commands = JSON.parse(slashCommandsJson || '[]');
+    } catch {
+      toast.error('Invalid slash_commands JSON');
+      setSaving(false);
+      return;
+    }
+    try {
+      await patch(`/bots/${bot._id}`, {
+        name: name?.trim() || bot?.user?.username || 'bot',
+        public: isPublic,
+        discoverable,
+        analytics,
+        intents,
+        interactions_url: interactionsUrl.trim(),
+        slash_commands,
+      });
+      toast.success('Bot settings saved');
+      onUpdated();
+    } catch (err) {
+      toast.error(err?.error || 'Failed to save bot settings');
+    }
+    setSaving(false);
+  };
+
+  const regenerateToken = async () => {
+    if (!confirm('Regenerate bot token? Old token will stop working.')) return;
+    try {
+      await patch(`/bots/${bot._id}`, { remove: 'Token' });
+      toast.success('Token regenerated');
+      onRefresh();
+    } catch (err) {
+      toast.error(err?.error || 'Failed to regenerate token');
+    }
+  };
+
+  const copyText = async (text) => {
+    if (navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // fall through to legacy copy path
+      }
+    }
+
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      textarea.style.pointerEvents = 'none';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const fetchToken = async () => {
+    const res = await get(`/bots/${bot._id}/token`);
+    if (!res?.token) throw new Error('No token returned');
+    setRevealedToken(res.token);
+    onCopyToken(res.token);
+    return res.token;
+  };
+
+  const revealToken = async () => {
+    try {
+      await fetchToken();
+      toast.success('Token revealed below');
+    } catch (err) {
+      toast.error(err?.error || err?.message || 'Failed to fetch token');
+    }
+  };
+
+  const revealAndCopyToken = async () => {
+    try {
+      const token = await fetchToken();
+      const copied = await copyText(token);
+      if (copied) {
+        toast.success('Bot token copied');
+      } else {
+        toast.success('Token revealed below');
+      }
+    } catch (err) {
+      toast.error(err?.error || err?.message || 'Failed to fetch token');
+    }
+  };
+
+  const installToServer = async () => {
+    if (!selectedServerId) return;
+    setInstalling(true);
+    try {
+      await post(`/bots/${bot._id}/invite`, { server: selectedServerId });
+      toast.success('Bot added to server');
+    } catch (err) {
+      toast.error(err?.error || 'Failed to add bot to server');
+    }
+    setInstalling(false);
+  };
+
+  return (
+    <div className="dev-bot-card">
+      <div className="dev-bot-header">
+        <div
+          className="dev-bot-avatar dev-bot-avatar-editable"
+          onClick={() => avatarInputRef.current?.click()}
+          title="Change avatar"
+        >
+          {avatarUrl ? <img src={avatarUrl} alt="" /> : (bot?.user?.username?.[0] || 'B').toUpperCase()}
+          {avatarUploading && <span className="dev-bot-avatar-overlay">...</span>}
+        </div>
+        <input
+          type="file"
+          accept="image/*"
+          ref={avatarInputRef}
+          style={{ display: 'none' }}
+          onChange={handleAvatarUpload}
+        />
+        <div className="dev-bot-meta">
+          <div className="dev-bot-name">{bot?.user?.username || 'Bot'}</div>
+          <div className="dev-bot-id">{bot?._id}</div>
+        </div>
+      </div>
+
+      <div className="dev-bot-section-label">Profile</div>
+      <div className="dev-bot-profile-row">
+        <div className="dev-bot-banner-preview" style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : {}}>
+          {bannerUploading && <span className="dev-bot-banner-overlay">Uploading...</span>}
+        </div>
+        <div className="dev-bot-banner-actions">
+          <button type="button" onClick={() => bannerInputRef.current?.click()} disabled={bannerUploading}>
+            {bannerUrl ? 'Change Banner' : 'Upload Banner'}
+          </button>
+          {bannerUrl && (
+            <button
+              type="button"
+              className="warn"
+              onClick={async () => {
+                try {
+                  await patch(`/bots/${bot._id}`, { profile: { banner: null } });
+                  toast.success('Banner removed');
+                  onUpdated();
+                } catch (err) {
+                  toast.error(err?.error || 'Failed to remove banner');
+                }
+              }}
+            >
+              Remove Banner
+            </button>
+          )}
+        </div>
+        <input
+          type="file"
+          accept="image/*"
+          ref={bannerInputRef}
+          style={{ display: 'none' }}
+          onChange={handleBannerUpload}
+        />
+      </div>
+
+      <div className="dev-grid">
+        <label>
+          <span>Bot Name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label>
+          <span>Intents Bitfield</span>
+          <input
+            value={String(intents)}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setIntents(Number.isFinite(v) ? v : 0);
+            }}
+          />
+        </label>
+      </div>
+
+      <div className="dev-bot-section-label">Gateway Intents</div>
+      <div className="dev-intents">
+        <label><input type="checkbox" checked={hasIntent(intents, INTENTS.GUILDS)} onChange={(e) => setIntents((v) => toggleIntent(v, INTENTS.GUILDS, e.target.checked))} /> GUILDS</label>
+        <label><input type="checkbox" checked={hasIntent(intents, INTENTS.GUILD_MEMBERS)} onChange={(e) => setIntents((v) => toggleIntent(v, INTENTS.GUILD_MEMBERS, e.target.checked))} /> GUILD_MEMBERS</label>
+        <label><input type="checkbox" checked={hasIntent(intents, INTENTS.GUILD_MESSAGES)} onChange={(e) => setIntents((v) => toggleIntent(v, INTENTS.GUILD_MESSAGES, e.target.checked))} /> GUILD_MESSAGES</label>
+        <label><input type="checkbox" checked={hasIntent(intents, INTENTS.MESSAGE_CONTENT)} onChange={(e) => setIntents((v) => toggleIntent(v, INTENTS.MESSAGE_CONTENT, e.target.checked))} /> MESSAGE_CONTENT</label>
+      </div>
+
+      <div className="dev-bot-section-label">Settings</div>
+      <div className="dev-flags">
+        <label><input type="checkbox" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} /> Public</label>
+        <label><input type="checkbox" checked={discoverable} onChange={(e) => setDiscoverable(e.target.checked)} /> Discoverable</label>
+        <label><input type="checkbox" checked={analytics} onChange={(e) => setAnalytics(e.target.checked)} /> Analytics</label>
+      </div>
+
+      <div className="dev-bot-section-label">Slash commands</div>
+      <p className="dev-hint">
+        When a user types <code>/name</code> in a server channel, Stoat POSTs a signed JSON body to your{' '}
+        <strong>interactions URL</strong> (HTTPS). Respond with JSON{' '}
+        <code style={{ whiteSpace: 'nowrap' }}>{'{"type":4,"data":{"content":"..."}}'}</code>{' '}
+        within about 8 seconds. Headers: <code>X-Stoat-Timestamp</code> (unix seconds) and{' '}
+        <code>X-Stoat-Signature</code> (hex HMAC-SHA256 of <code>timestamp + "." + rawBody</code> using your bot token).
+        Command names: lowercase <code>a-z 0-9 _ -</code>, unique per server among bots, and cannot match built-ins (
+        <code>help</code>, <code>ping</code>, <code>shrug</code>, <code>tableflip</code>).
+      </p>
+      <div className="dev-grid" style={{ marginBottom: 12 }}>
+        <label style={{ gridColumn: '1 / -1' }}>
+          <span>Interactions URL (HTTPS)</span>
+          <input
+            value={interactionsUrl}
+            onChange={(e) => setInteractionsUrl(e.target.value)}
+            placeholder="https://your.bot/interactions"
+            style={{ width: '100%' }}
+          />
+        </label>
+        <label style={{ gridColumn: '1 / -1' }}>
+          <span>slash_commands (JSON array)</span>
+          <textarea
+            value={slashCommandsJson}
+            onChange={(e) => setSlashCommandsJson(e.target.value)}
+            rows={6}
+            spellCheck={false}
+            style={{ width: '100%', resize: 'vertical', fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
+            placeholder='[{"name":"hello","description":"Says hi"}]'
+          />
+        </label>
+      </div>
+
+      <div className="dev-actions">
+        <button className="primary" onClick={saveSettings} disabled={saving}>{saving ? 'Saving...' : 'Save Settings'}</button>
+        <button onClick={revealToken}>Reveal Token</button>
+        <button onClick={revealAndCopyToken}>Copy Token</button>
+        <button className="warn" onClick={regenerateToken}>Regenerate Token</button>
+      </div>
+
+      {revealedToken && (
+        <div className="dev-grid" style={{ marginTop: 12 }}>
+          <label style={{ gridColumn: '1 / -1' }}>
+            <span>Bot Token</span>
+            <textarea
+              value={revealedToken}
+              readOnly
+              rows={3}
+              onFocus={(e) => e.target.select()}
+              style={{ width: '100%', resize: 'vertical' }}
+            />
+          </label>
+        </div>
+      )}
+
+      <div className="dev-bot-section-label">Install to Server</div>
+      <div className="dev-install-row">
+        <select value={selectedServerId} onChange={(e) => setSelectedServerId(e.target.value)}>
+          <option value="">Select a server you own</option>
+          {installableServers.map((s) => (
+            <option key={s._id} value={s._id}>{s.name}</option>
+          ))}
+        </select>
+        <button onClick={installToServer} disabled={!selectedServerId || installing}>
+          {installing ? 'Adding...' : 'Add To Server'}
+        </button>
+      </div>
+    </div>
+  );
+}

@@ -85,7 +85,7 @@ export default function BotMarketplacePage() {
           <div className="bot-marketplace-nav">
             {user ? (
               <>
-                <Link to="/developers" className="bot-marketplace-link">Developer Portal</Link>
+                <Link to="/developers/docs/api" className="bot-marketplace-link">Developer Portal</Link>
                 <Link to="/channels/@me" className="bot-marketplace-link primary">Back to App</Link>
               </>
             ) : (

@@ -7,6 +7,7 @@ import { useUnread } from '../context/UnreadContext';
 import { useToast } from '../context/ToastContext';
 import { MobileProvider, useMobile } from '../context/MobileContext';
 import { useOfeed } from '../context/OfeedContext';
+import { OnboardingProvider } from '../context/OnboardingContext';
 import { get, post } from '../api';
 import ServerBar from '../components/ServerBar';
 import ChannelSidebar from '../components/ChannelSidebar';
@@ -16,6 +17,7 @@ import OfeedPanel from '../components/OfeedPanel';
 import FriendsPage from '../components/FriendsPage';
 import MeHomePage from '../components/MeHomePage';
 import VoiceChannelView from '../components/VoiceChannelView';
+import OnboardingWizard from '../components/OnboardingWizard';
 import './AppLayout.css';
 
 export default function AppLayout() {
@@ -37,6 +39,15 @@ function AppLayoutInner() {
   const { setOpen: setOfeedOpen, setDeepLinkPostId } = useOfeed() || {};
   const [servers, setServers] = useState([]);
   const [dms, setDms] = useState([]);
+  const fetchDMs = useCallback(async () => {
+    try {
+      const channels = await get('/users/dms');
+      setDms(channels || []);
+    } catch {}
+  }, []);
+  const dmsRef = useRef([]);
+  const dmProbeInFlightRef = useRef(new Set());
+  useEffect(() => { dmsRef.current = dms; }, [dms]);
 
   /** Global Ofeed share links use /channels/@me#ofeed_post=… — redirect here if opened from a server/channel URL. */
   useEffect(() => {
@@ -74,22 +85,43 @@ function AppLayoutInner() {
 
   useEffect(() => {
     if (!on || !fetchUnreads) return;
-    return on('MESSAGE_CREATE', (data) => {
+    return on('MESSAGE_CREATE', async (data) => {
       const d = data?.d ?? data?.data ?? data;
       if (!d?.channel) return;
       const path = location.pathname;
       const meTail = path.startsWith('/channels/@me/') ? path.split('/').pop() : null;
       const viewingChannelId = meTail && meTail !== 'friends' ? meTail : (!path.startsWith('/channels/@me/') ? (path.match(/\/channels\/[^/]+\/([^/]+)$/)?.[1] ?? null) : null);
       if (viewingChannelId !== d.channel) fetchUnreads();
-    });
-  }, [on, location.pathname, fetchUnreads]);
 
-  const fetchDMs = useCallback(async () => {
-    try {
-      const channels = await get('/users/dms');
-      setDms(channels || []);
-    } catch {}
-  }, []);
+      const knownDmIds = new Set((dmsRef.current || []).map((ch) => String(ch?._id)));
+      if (knownDmIds.has(String(d.channel))) {
+        // Keep DM list fresh and ordered instantly for known DM channels.
+        setDms((prev) => {
+          const idx = prev.findIndex((ch) => String(ch?._id) === String(d.channel));
+          if (idx < 0) return prev;
+          const row = { ...prev[idx], last_message_id: d._id || prev[idx].last_message_id };
+          const next = [row, ...prev.slice(0, idx), ...prev.slice(idx + 1)];
+          return next;
+        });
+        return;
+      }
+
+      // Unknown channel: probe once; if it's a DM-like channel, refresh DMs now.
+      const key = String(d.channel);
+      if (dmProbeInFlightRef.current.has(key)) return;
+      dmProbeInFlightRef.current.add(key);
+      try {
+        const ch = await get(`/channels/${key}`);
+        if (ch?.channel_type === 'DirectMessage' || ch?.channel_type === 'Group' || ch?.channel_type === 'SavedMessages') {
+          fetchDMs();
+        }
+      } catch {
+        // Not accessible or not relevant for this user.
+      } finally {
+        dmProbeInFlightRef.current.delete(key);
+      }
+    });
+  }, [on, location.pathname, fetchUnreads, fetchDMs]);
 
   const fetchServers = useCallback(async () => {
     try {
@@ -155,6 +187,7 @@ function AppLayoutInner() {
   }, [on, user?._id, onSelfRemovedFromServer]);
 
   return (
+    <OnboardingProvider servers={servers} dms={dms}>
     <div
       className={`app-layout${isMobile ? ' mobile' : ''}`}
       data-mobile-overlay={mobileOverlay || ''}
@@ -217,7 +250,9 @@ function AppLayoutInner() {
           }
         />
       </Routes>
+      <OnboardingWizard onServerAdded={addServer} />
     </div>
+    </OnboardingProvider>
   );
 }
 

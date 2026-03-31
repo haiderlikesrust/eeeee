@@ -1,0 +1,443 @@
+.cloud-page {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-primary);
+  color: var(--text-normal);
+  overflow-y: auto;
+  z-index: 200;
+}
+
+.cloud-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.cloud-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.cloud-header h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--header-primary);
+}
+
+.cloud-header p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ── Usage bar ── */
+.cloud-usage-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--input-border);
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.cloud-usage-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.cloud-usage-label strong {
+  color: var(--header-primary);
+}
+
+.cloud-usage-track {
+  height: 10px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.cloud-usage-fill {
+  height: 100%;
+  border-radius: 6px;
+  background: var(--accent);
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+
+.cloud-usage-fill.warn {
+  background: #f59e0b;
+}
+
+.cloud-usage-fill.critical {
+  background: #ef4444;
+}
+
+/* ── Files table ── */
+.cloud-files-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--input-border);
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.cloud-files-panel h2,
+.cloud-files-heading {
+  margin: 0 0 14px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--header-primary);
+}
+
+.cloud-files-heading {
+  margin-top: 8px;
+}
+
+.cloud-quota-banner {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-normal);
+}
+
+.cloud-quota-banner strong {
+  color: var(--header-primary);
+}
+
+.cloud-quota-banner--block {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.cloud-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.cloud-toolbar-search {
+  flex: 1 1 200px;
+  min-width: 160px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--bg-primary);
+  color: var(--text-normal);
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.cloud-toolbar-select {
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--bg-primary);
+  color: var(--text-normal);
+  padding: 0 10px;
+  font-size: 13px;
+  min-width: 140px;
+}
+
+.cloud-toolbar-date {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cloud-toolbar-date input {
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--bg-primary);
+  color: var(--text-normal);
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+.cloud-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--input-border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.cloud-bulk-delete {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: none;
+  background: #ef4444;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cloud-bulk-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cloud-bulk-clear {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cloud-col-check {
+  width: 36px;
+  text-align: center;
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+}
+
+.cloud-col-actions {
+  width: 200px;
+  white-space: nowrap;
+}
+
+.cloud-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cloud-action-link {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.cloud-action-link:hover {
+  text-decoration: underline;
+}
+
+.cloud-action-muted {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cloud-delete-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  background: transparent;
+  color: #f87171;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cloud-delete-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.cloud-delete-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cloud-empty--rich .cloud-empty-hint {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.cloud-empty-reset {
+  margin-top: 14px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--bg-secondary);
+  color: var(--text-normal);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cloud-files-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.cloud-files-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--input-border);
+}
+
+.cloud-files-table td {
+  padding: 10px 8px;
+  font-size: 13px;
+  color: var(--text-normal);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  max-width: 0;
+}
+
+.cloud-files-table tr:last-child td {
+  border-bottom: none;
+}
+
+.cloud-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-file-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.cloud-file-link:hover {
+  text-decoration: underline;
+}
+
+.cloud-file-type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.cloud-file-size {
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.cloud-file-date {
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.cloud-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+  padding: 32px 0;
+}
+
+.cloud-load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.cloud-load-more button {
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--bg-secondary);
+  color: var(--text-normal);
+  padding: 0 20px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cloud-load-more button:hover {
+  background: var(--bg-modifier-hover);
+  color: var(--header-primary);
+}
+
+.cloud-load-more button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cloud-back-btn {
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--bg-secondary);
+  color: var(--text-normal);
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.cloud-back-btn:hover {
+  background: var(--bg-modifier-hover);
+  text-decoration: none;
+  color: var(--header-primary);
+}
+
+@media (max-width: 768px) {
+  .cloud-inner {
+    padding: 14px 12px 24px;
+  }
+
+  .cloud-header {
+    flex-direction: column;
+  }
+
+  .cloud-header h1 {
+    font-size: 22px;
+  }
+
+  .cloud-files-panel {
+    padding: 14px;
+  }
+
+  .cloud-usage-panel {
+    padding: 14px;
+  }
+
+  .cloud-toolbar-date span {
+    display: none;
+  }
+
+  .cloud-col-actions {
+    width: auto;
+    min-width: 140px;
+  }
+}

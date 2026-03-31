@@ -208,6 +208,55 @@
   margin-bottom: 36px;
 }
 
+.me-home-onboarding {
+  margin-bottom: 24px;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--input-border);
+  background: var(--bg-floating);
+}
+
+.me-home-onboarding-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.me-home-onboarding-progress {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.me-home-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.me-home-check-item {
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+}
+
+.me-home-check-item.done {
+  color: var(--accent);
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.me-home-template-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .me-home-discover-title {
   font-size: 1.15rem;
   font-weight: 700;
@@ -537,6 +586,23 @@
   background: var(--bg-modifier-selected);
   color: var(--header-primary);
   border-color: rgba(255, 255, 255, 0.12);
+}
+
+.me-home-rooms-cta {
+  margin-bottom: 20px;
+}
+
+.me-home-btn-room {
+  background: #43b581;
+  color: #fff;
+  border-color: #43b581;
+  display: inline-flex;
+  align-items: center;
+}
+
+.me-home-btn-room:hover {
+  background: #3aa876;
+  border-color: #3aa876;
 }
 
 @media (min-width: 560px) {

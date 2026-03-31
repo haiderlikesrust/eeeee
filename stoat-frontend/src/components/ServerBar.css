@@ -113,6 +113,40 @@
   fill: #fff;
 }
 
+.room-icon {
+  background: var(--bg-floating);
+  color: #43b581;
+}
+
+.room-icon:hover {
+  background: #43b581;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(67, 181, 129, 0.3);
+}
+
+.room-icon:hover svg path {
+  fill: #fff;
+}
+
+.room-icon-disabled {
+  opacity: 0.72;
+}
+
+.room-icon-disabled:hover {
+  background: var(--bg-floating);
+  color: #43b581;
+  box-shadow: none;
+  transform: none;
+}
+
+.room-icon-disabled:hover::before {
+  display: none;
+}
+
+.room-icon-disabled:hover svg path {
+  fill: currentColor;
+}
+
 .user-icon {
   background: var(--bg-floating);
   color: var(--red-400);

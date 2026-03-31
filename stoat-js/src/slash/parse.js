@@ -17,7 +17,7 @@ export function parseSlashContent(content) {
 }
 
 /** Names reserved for platform builtins; bot registration must not use these. */
-export const RESERVED_BUILTIN_NAMES = new Set(['help', 'ping', 'shrug', 'tableflip', 'whiteboard']);
+export const RESERVED_BUILTIN_NAMES = new Set(['help', 'ping', 'shrug', 'tableflip', 'whiteboard', 'minigame']);
 
 export const SLASH_NAME_RE = /^[a-z0-9_-]{1,32}$/;
 export const MAX_SLASH_COMMANDS_PER_BOT = 100;

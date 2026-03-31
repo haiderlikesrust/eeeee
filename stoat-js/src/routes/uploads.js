@@ -5,6 +5,8 @@ import fs from 'fs';
 import { ulid } from 'ulid';
 import { authMiddleware } from '../middleware/auth.js';
 import config from '../../config.js';
+import { User, CloudFile } from '../db/models/index.js';
+import { effectiveCloudQuotaBytes, formatCloudBytes } from '../lib/cloudStorage.js';
 
 const router = Router();
 
@@ -51,11 +53,44 @@ async function putS3Object(key, body, contentType) {
   }));
 }
 
+function buildMetadata(mimetype) {
+  const metadata = {
+    type: mimetype.startsWith('image/') ? 'Image' : mimetype.startsWith('video/') ? 'Video' : mimetype.startsWith('audio/') ? 'Audio' : 'File',
+  };
+  if (mimetype.startsWith('image/')) {
+    metadata.width = 0;
+    metadata.height = 0;
+  }
+  return metadata;
+}
+
 // POST /attachments - upload a file, returns file metadata
 router.post('/', authMiddleware(), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ type: 'InvalidBody', error: 'No file provided' });
 
   const file = req.file;
+  const userId = req.userId;
+
+  const owner = await User.findById(userId).select('cloud_bytes_used cloud_quota_bytes').lean();
+  const quota = effectiveCloudQuotaBytes(owner);
+  const used = owner?.cloud_bytes_used || 0;
+  if (used + file.size > quota) {
+    if (!useS3 && file.filename) {
+      try { fs.unlinkSync(path.join(UPLOAD_DIR, file.filename)); } catch {}
+    }
+    if (useS3 && file.buffer) {
+      /* multer memory: nothing written to S3 yet for quota fail before put — OK */
+    }
+    return res.status(413).json({
+      type: 'QuotaExceeded',
+      error: `Storage quota exceeded. You have used ${formatCloudBytes(used)} of ${formatCloudBytes(quota)}.`,
+      used_bytes: used,
+      quota_bytes: quota,
+    });
+  }
+
+  const metadata = buildMetadata(file.mimetype);
+  let result;
 
   if (useS3) {
     const ext = path.extname(file.originalname || '') || '';
@@ -67,14 +102,7 @@ router.post('/', authMiddleware(), upload.single('file'), async (req, res) => {
       return res.status(500).json({ type: 'UploadError', error: e.message || 'S3 upload failed' });
     }
     const publicUrl = `${config.s3.publicBaseUrl}/${key}`;
-    const metadata = {
-      type: file.mimetype.startsWith('image/') ? 'Image' : file.mimetype.startsWith('video/') ? 'Video' : file.mimetype.startsWith('audio/') ? 'Audio' : 'File',
-    };
-    if (file.mimetype.startsWith('image/')) {
-      metadata.width = 0;
-      metadata.height = 0;
-    }
-    return res.json({
+    result = {
       _id: finalId,
       tag: 'attachments',
       filename: file.originalname,
@@ -82,35 +110,39 @@ router.post('/', authMiddleware(), upload.single('file'), async (req, res) => {
       size: file.size,
       metadata,
       url: publicUrl,
-    });
+    };
+  } else {
+    const idLocal = path.basename(file.filename, path.extname(file.filename));
+    result = {
+      _id: idLocal,
+      tag: 'attachments',
+      filename: file.originalname,
+      content_type: file.mimetype,
+      size: file.size,
+      metadata,
+      url: `/attachments/${file.filename}`,
+    };
+    try {
+      const sidecar = path.join(UPLOAD_DIR, `${idLocal}.ctype.json`);
+      fs.writeFileSync(sidecar, JSON.stringify({ contentType: file.mimetype }), 'utf8');
+    } catch {
+      /* non-fatal */
+    }
   }
-
-  const idLocal = path.basename(file.filename, path.extname(file.filename));
-
-  const metadata = {
-    type: file.mimetype.startsWith('image/') ? 'Image' : file.mimetype.startsWith('video/') ? 'Video' : file.mimetype.startsWith('audio/') ? 'Audio' : 'File',
-  };
-
-  if (file.mimetype.startsWith('image/')) {
-    metadata.width = 0;
-    metadata.height = 0;
-  }
-
-  const result = {
-    _id: idLocal,
-    tag: 'attachments',
-    filename: file.originalname,
-    content_type: file.mimetype,
-    size: file.size,
-    metadata,
-    url: `/attachments/${file.filename}`,
-  };
 
   try {
-    const sidecar = path.join(UPLOAD_DIR, `${idLocal}.ctype.json`);
-    fs.writeFileSync(sidecar, JSON.stringify({ contentType: file.mimetype }), 'utf8');
+    await CloudFile.create({
+      _id: result._id,
+      owner: userId,
+      filename: file.originalname,
+      content_type: file.mimetype,
+      size: file.size,
+      url: result.url,
+      metadata,
+    });
+    await User.updateOne({ _id: userId }, { $inc: { cloud_bytes_used: file.size } });
   } catch {
-    /* non-fatal: GET will fall back to extension-based MIME */
+    /* ledger write non-fatal — file is already stored, don't fail the upload */
   }
 
   res.json(result);

@@ -80,6 +80,11 @@
   background: rgba(74, 222, 128, 0.12);
 }
 
+.chat-header-btn--active {
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+
 .messages-list {
   flex: 1;
   overflow-y: auto;
@@ -139,6 +144,16 @@
 .message.with-header {
   margin-top: 16px;
   padding-top: 4px;
+}
+
+.chat-area.compact-mode .message.with-header {
+  margin-top: 0;
+  padding-top: 3px;
+}
+
+.chat-area.compact-mode .msg-avatar,
+.chat-area.compact-mode .msg-header {
+  display: none;
 }
 
 .msg-avatar {
@@ -737,6 +752,12 @@
   color: var(--header-primary);
 }
 
+.msg-action-btn-quick-emoji {
+  width: auto;
+  min-width: 28px;
+  padding: 0 6px;
+}
+
 /* Reaction picker */
 .reaction-picker-wrap {
   position: absolute;
@@ -896,6 +917,27 @@
   position: relative;
   z-index: 2;
   padding-right: 2px;
+}
+
+.chat-cloud-hint {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 0 6px;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-cloud-hint:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.chat-cloud-hint--warn {
+  color: #f59e0b;
 }
 
 .chat-input-field-shell {
@@ -1148,6 +1190,10 @@
   margin-top: 4px;
 }
 
+.msg-mobile-quick-reactions {
+  display: none;
+}
+
 .reaction-btn {
   display: flex;
   align-items: center;
@@ -1267,6 +1313,10 @@
   gap: 8px;
 }
 
+.search-filter-row {
+  margin-top: 8px;
+}
+
 .search-input {
   flex: 1;
   padding: 8px 14px;
@@ -1281,6 +1331,31 @@
 .search-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
+.search-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-normal);
+  font-size: 13px;
+}
+
+.search-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--input-border);
+  background: var(--bg-modifier-active);
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .pinned-header {
@@ -1682,6 +1757,13 @@
 
   .msg-action-bar {
     right: 8px;
+  }
+
+  .msg-mobile-quick-reactions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
   }
 
   .search-panel,

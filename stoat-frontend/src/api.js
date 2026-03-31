@@ -72,7 +72,8 @@ export async function get(path) {
     path.includes('/messages')
     || path.includes('/ofeed')
     || path.includes('/members')
-    || path.includes('/commands');
+    || path.includes('/commands')
+    || path.includes('/cloud');
   if (!skipCache) {
     const cached = getCache.get(path);
     if (cached && Date.now() < cached.expires) return cached.data;

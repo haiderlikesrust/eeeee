@@ -4,7 +4,7 @@
  * Includes voice signaling for WebRTC.
  */
 import { WebSocketServer } from 'ws';
-import { Session, User, Member, Server, Channel, Bot, WhiteboardSession } from './db/models/index.js';
+import { Session, User, Member, Server, Channel, Bot, WhiteboardSession, Room } from './db/models/index.js';
 import {
   createRoom,
   getRoom,
@@ -196,17 +196,26 @@ export function createEventServer(server) {
     }
     const memberships = await Member.find({ user: userId }).lean();
     const serverIds = memberships.map((m) => m.server);
+    const roomsForUser = await Room.find({ members: userId, status: 'active' }).select('_id text_channel voice_channel').lean();
     clients.set(key, { ws, kind, userId, lastPing: Date.now(), intents: Number.isFinite(intents) ? intents : 0, serverIds });
 
     const servers = await Server.find({ _id: { $in: serverIds } }).lean();
     const channelIds = servers.flatMap((s) => s.channels || []);
     const channels = await Channel.find({ _id: { $in: channelIds } }).lean();
 
-    // Build voice states for the user's servers
+    // Build voice states for the user's servers and active rooms
     const voiceStatesData = {};
     for (const ch of channels) {
       const members = getVoiceMembers(ch._id);
       if (members.length > 0) voiceStatesData[ch._id] = members;
+    }
+    for (const [voiceChannelId, state] of voiceStates.entries()) {
+      const asServerChannel = channels.some((ch) => String(ch._id) === String(voiceChannelId));
+      if (asServerChannel) continue;
+      const room = roomsForUser.find((r) => String(r.voice_channel) === String(voiceChannelId));
+      if (!room) continue;
+      const members = [...state.keys()];
+      if (members.length > 0) voiceStatesData[voiceChannelId] = members;
     }
 
     ws.send(JSON.stringify({ type: 'Ready', data: { users: [user], servers, channels, voiceStates: voiceStatesData } }));
@@ -295,7 +304,16 @@ export function createEventServer(server) {
             const channel = await Channel.findById(channelId).lean();
             if (!channel || channel.channel_type !== 'VoiceChannel') break;
             const serverId = channel.server;
-            if (!serverId || !entry.serverIds || !entry.serverIds.some((sid) => String(sid) === String(serverId))) break;
+            let allowed = false;
+            if (serverId && entry.serverIds && entry.serverIds.some((sid) => String(sid) === String(serverId))) {
+              allowed = true;
+            } else if (serverId) {
+              const room = await Room.findById(serverId).select('_id members status').lean();
+              if (room && room.status === 'active' && (room.members || []).some((id) => String(id) === String(userId))) {
+                allowed = true;
+              }
+            }
+            if (!allowed) break;
 
             // Leave any current voice channel first
             leaveAllVoice(userId, key);
@@ -309,7 +327,7 @@ export function createEventServer(server) {
               type: 'VoiceStateUpdate',
               data: { channelId, userId, action: 'join', members },
             };
-            // Notify all server members (so sidebar stays in sync for everyone, including rejoiner)
+            // Notify all channel participants (server members or room members)
             broadcastToChannel(channelId, voiceStateEvt).catch(() => {});
 
             const existingMembers = members.filter((id) => id !== userId);
@@ -617,6 +635,21 @@ export async function broadcastToServer(serverId, event, excludeUserId, options 
   }
 }
 
+export async function broadcastToRoom(roomId, event, excludeUserId) {
+  const { default: Room } = await import('./db/models/Room.js');
+  const room = await Room.findById(roomId).lean();
+  if (!room) return;
+  const memberIds = new Set((room.members || []).map((m) => String(m)));
+  const payload = typeof event === 'string' ? event : JSON.stringify(event);
+  const exclude = excludeUserId != null ? String(excludeUserId) : null;
+  for (const [, entry] of clients.entries()) {
+    if (entry.ws.readyState !== 1) continue;
+    if (!memberIds.has(String(entry.userId))) continue;
+    if (exclude && String(entry.userId) === exclude) continue;
+    entry.ws.send(payload);
+  }
+}
+
 export function broadcastToWhiteboardSession(sessionId, event, options = {}) {
   const room = getRoom(sessionId);
   if (!room) return;
@@ -638,7 +671,14 @@ export async function broadcastToChannel(channelId, event, options = {}) {
   let allowedUsers = [];
   if (channel.server) {
     const members = await Member.find({ server: channel.server }).select('user').lean();
-    allowedUsers = members.map((m) => m.user);
+    if (members.length > 0) {
+      allowedUsers = members.map((m) => m.user);
+    } else {
+      const room = await Room.findById(channel.server).select('members status').lean();
+      if (room && room.status === 'active') {
+        allowedUsers = room.members || [];
+      }
+    }
   } else if (channel.channel_type === 'SavedMessages') {
     if (channel.user) allowedUsers = [channel.user];
   } else if (channel.channel_type === 'DirectMessage' || channel.channel_type === 'Group') {

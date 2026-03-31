@@ -389,7 +389,7 @@ export default function BotBuilderEditorPage() {
     <div className="builder-page">
       <header className="builder-header">
         <div className="builder-header-inner">
-          <Link to="/developers" className="builder-back">← Developer Portal</Link>
+          <Link to="/developers/apps" className="builder-back">← Developer Portal</Link>
           <h1>No-Code Bot Builder</h1>
           <p>Configure triggers and actions, then generate JavaScript you can host.</p>
         </div>

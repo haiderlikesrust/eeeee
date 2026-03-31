@@ -4,9 +4,11 @@ import { useAuth } from '../context/AuthContext';
 import { useMobile } from '../context/MobileContext';
 import { useWS } from '../context/WebSocketContext';
 import { useToast } from '../context/ToastContext';
-import { get } from '../api';
+import { get, post } from '../api';
 import { resolveFileUrl } from '../utils/avatarUrl';
 import './MeHomePage.css';
+
+const ONBOARD_FIRST_POST_KEY = 'opic.onboarding.firstPost.v1';
 
 function IconServers() {
   return (
@@ -42,6 +44,13 @@ export default function MeHomePage() {
 
   const [discoverList, setDiscoverList] = useState([]);
   const [discoverLoading, setDiscoverLoading] = useState(true);
+  const [checklist, setChecklist] = useState({
+    profileComplete: false,
+    firstPost: false,
+    joinedConversation: false,
+    invitedFriend: false,
+  });
+  const [creatingTemplate, setCreatingTemplate] = useState(null);
   const wsDiscoverReceived = useRef(false);
   const joinWsPending = useRef(false);
 
@@ -88,6 +97,67 @@ export default function MeHomePage() {
     loadDiscoverHttp();
     return () => { cancelled = true; };
   }, [connected, on, send, loadDiscoverHttp]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadChecklist = async () => {
+      try {
+        const [servers, dms] = await Promise.all([
+          get('/users/servers').catch(() => []),
+          get('/users/dms').catch(() => []),
+        ]);
+        if (cancelled) return;
+        const firstPost = localStorage.getItem(ONBOARD_FIRST_POST_KEY) === '1';
+        const profileComplete = !!(user?.display_name || user?.avatar || user?.profile?.bio || user?.profile?.content);
+        const joinedConversation = (Array.isArray(servers) && servers.length > 0) || (Array.isArray(dms) && dms.length > 0);
+        const invitedFriend = Array.isArray(user?.relations) && user.relations.some((r) => r?.status === 'Friend');
+        setChecklist({ profileComplete, firstPost, joinedConversation, invitedFriend });
+      } catch {}
+    };
+    loadChecklist();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  const checklistDone = Object.values(checklist).filter(Boolean).length;
+  const onboardingTip = checklist.profileComplete
+    ? (checklist.firstPost ? 'Try a starter template to spin up your first community in one click.' : 'Send your first message to unlock faster onboarding.')
+    : 'Add a display name or avatar in User Settings to complete your profile.';
+
+  const createStarterTemplate = useCallback(async (template) => {
+    if (creatingTemplate) return;
+    setCreatingTemplate(template);
+    try {
+      const defs = {
+        friends: {
+          serverName: 'Friends Hangout',
+          channels: [
+            { name: 'general', type: 'text', description: 'Daily chat and updates' },
+            { name: 'memes', type: 'text', description: 'Drop funny stuff' },
+            { name: 'voice', type: 'voice', description: 'Jump in and talk' },
+          ],
+        },
+        study: {
+          serverName: 'Study Space',
+          channels: [
+            { name: 'announcements', type: 'text', description: 'Important updates' },
+            { name: 'resources', type: 'text', description: 'Links, notes, and docs' },
+            { name: 'focus-room', type: 'voice', description: 'Pomodoro and deep work calls' },
+          ],
+        },
+      };
+      const def = defs[template];
+      if (!def) return;
+      const server = await post('/servers/create', { name: def.serverName });
+      for (const channel of def.channels) {
+        await post(`/servers/${server._id}/channels`, channel);
+      }
+      toast.success(`${def.serverName} created`);
+      navigate(`/channels/${server._id}`);
+    } catch (err) {
+      toast.error(err?.error || 'Failed to create starter template');
+    }
+    setCreatingTemplate(null);
+  }, [creatingTemplate, navigate, toast]);
 
   const joinDiscoverServer = useCallback(
     (slug) => {
@@ -159,7 +229,39 @@ export default function MeHomePage() {
           </p>
         </header>
 
-        <section className="me-home-discover" aria-labelledby="me-home-discover-heading">
+        <section className="me-home-onboarding" aria-labelledby="me-home-onboarding-heading">
+          <div className="me-home-onboarding-top">
+            <h2 id="me-home-onboarding-heading" className="me-home-discover-title">First-hour checklist</h2>
+            <span className="me-home-onboarding-progress">{checklistDone}/4 complete</span>
+          </div>
+          <p className="me-home-discover-sub">{onboardingTip}</p>
+          <div className="me-home-checklist">
+            <div className={`me-home-check-item ${checklist.profileComplete ? 'done' : ''}`}>Profile complete</div>
+            <div className={`me-home-check-item ${checklist.firstPost ? 'done' : ''}`}>First post sent</div>
+            <div className={`me-home-check-item ${checklist.joinedConversation ? 'done' : ''}`}>Joined a server or DM</div>
+            <div className={`me-home-check-item ${checklist.invitedFriend ? 'done' : ''}`}>Added a friend</div>
+          </div>
+          <div className="me-home-template-row">
+            <button
+              type="button"
+              className="me-home-btn me-home-btn-secondary"
+              onClick={() => createStarterTemplate('friends')}
+              disabled={!!creatingTemplate}
+            >
+              {creatingTemplate === 'friends' ? 'Creating...' : 'Starter: Friends Community'}
+            </button>
+            <button
+              type="button"
+              className="me-home-btn me-home-btn-secondary"
+              onClick={() => createStarterTemplate('study')}
+              disabled={!!creatingTemplate}
+            >
+              {creatingTemplate === 'study' ? 'Creating...' : 'Starter: Study Group'}
+            </button>
+          </div>
+        </section>
+
+        <section className="me-home-discover" aria-labelledby="me-home-discover-heading" data-onboarding-id="onboarding-home-discover">
           <h2 id="me-home-discover-heading" className="me-home-discover-title">
             Discover servers
           </h2>
@@ -253,6 +355,26 @@ export default function MeHomePage() {
           </article>
         </div>
 
+        <section className="me-home-rooms-cta">
+          <h2 className="me-home-discover-title">Opic Rooms</h2>
+          <p className="me-home-discover-sub">
+            Temporary hangout spaces with chat and voice. Create one in seconds &mdash; it closes when everyone leaves.
+          </p>
+          <div className="me-home-template-row">
+            <button
+              type="button"
+              className="me-home-btn me-home-btn-room"
+              title="Opic Rooms are still in works"
+              onClick={() => toast.info('Opic Rooms are still in works.')}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style={{ marginRight: 6 }}>
+                <path fill="currentColor" d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />
+              </svg>
+              Create a Room
+            </button>
+          </div>
+        </section>
+
         <footer className="me-home-actions">
           <Link to="/channels/@me/friends" className="me-home-btn me-home-btn-primary">
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
@@ -266,7 +388,13 @@ export default function MeHomePage() {
             </svg>
             Changelog
           </Link>
-          <Link to="/developers" className="me-home-btn me-home-btn-secondary">
+          <Link to="/cloud" className="me-home-btn me-home-btn-secondary">
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" />
+            </svg>
+            Opic Cloud
+          </Link>
+          <Link to="/developers/docs/api" className="me-home-btn me-home-btn-secondary">
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path fill="currentColor" d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z" />
             </svg>

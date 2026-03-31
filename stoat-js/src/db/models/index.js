@@ -20,3 +20,6 @@ export { default as OfeedPost } from './OfeedPost.js';
 export { default as WhiteboardSession } from './WhiteboardSession.js';
 export { default as Interaction } from './Interaction.js';
 export { default as AnalyticsEvent } from './AnalyticsEvent.js';
+export { default as Room } from './Room.js';
+export { default as MinigameSession } from './MinigameSession.js';
+export { default as CloudFile } from './CloudFile.js';

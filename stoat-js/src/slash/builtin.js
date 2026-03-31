@@ -12,6 +12,7 @@ export const BUILTIN_SLASH_LIST = [
   { name: 'shrug', description: 'Shrug' },
   { name: 'tableflip', description: 'Flip a table' },
   { name: 'whiteboard', description: 'Start a collaborative whiteboard in this channel' },
+  { name: 'minigame', description: 'Start a minigame (e.g. /minigame geoguesser)' },
 ];
 
 export function listBuiltinCommandsForApi() {

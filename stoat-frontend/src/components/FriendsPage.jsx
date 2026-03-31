@@ -99,7 +99,7 @@ export default function FriendsPage() {
         <button className={`friends-tab ${tab === 'online' ? 'active' : ''}`} onClick={() => { setTab('online'); setShowAdd(false); }}>All</button>
         <button className={`friends-tab ${tab === 'pending' ? 'active' : ''}`} onClick={() => { setTab('pending'); setShowAdd(false); }}>Pending</button>
         <button className={`friends-tab ${tab === 'blocked' ? 'active' : ''}`} onClick={() => { setTab('blocked'); setShowAdd(false); }}>Blocked</button>
-        <button className="friends-tab add-btn" onClick={() => setShowAdd(!showAdd)}>Add Friend</button>
+        <button className="friends-tab add-btn" data-onboarding-id="onboarding-friends-action" onClick={() => setShowAdd(!showAdd)}>Add Friend</button>
       </div>
 
       {showAdd && (

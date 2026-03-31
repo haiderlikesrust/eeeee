@@ -18,6 +18,7 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       await register(email, password, username || undefined);
+      try { localStorage.setItem('opic.onboarding.justRegistered', '1'); } catch {}
       navigate('/channels/@me');
     } catch (err) {
       setError(err.error || 'Registration failed');

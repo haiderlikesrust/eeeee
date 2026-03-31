@@ -4,7 +4,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9_-]{2,31}$/;
 const RESERVED = new Set([
   'admin', 'api', 'invite', 'invites', 'servers', 'channels', 'users', 'auth', 'bot', 'bots',
   'discover', 'public', 'static', 'assets', 'ws', 'wss', 'health', 'ready', 'me', 'login', 'register',
-  'developers', 'changelog', 'ofeed', 'sync', 'push', 'webhooks', 'attachments', 'preview',
+  'developers', 'changelog', 'ofeed', 'sync', 'push', 'webhooks', 'attachments', 'preview', 'cloud',
 ]);
 
 /** @param {unknown} raw */

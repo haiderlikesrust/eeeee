@@ -6,6 +6,10 @@ const messageSchema = new mongoose.Schema({
   author: { type: String, required: true, ref: 'User' },
   webhook: mongoose.Schema.Types.Mixed,
   content: String,
+  edit_history: [{
+    content: String,
+    edited_at: { type: Date, default: Date.now },
+  }],
   system: mongoose.Schema.Types.Mixed,
   attachments: [mongoose.Schema.Types.Mixed],
   edited: Date,

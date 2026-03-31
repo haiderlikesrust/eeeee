@@ -107,7 +107,7 @@ function ChannelSidebar({
         <div className="sidebar-header">
           <input className="sidebar-search" placeholder="Find or start a conversation" readOnly />
         </div>
-        <div className="sidebar-channels">
+        <div className="sidebar-channels" data-onboarding-id="onboarding-sidebar-nav">
           <div
             className={`channel-item ${isMeHome ? 'active' : ''}`}
             onClick={() => { navigate('/channels/@me'); closeMobileOverlay(); }}
@@ -645,7 +645,7 @@ function UserPanel({ user }) {
 
   return (
     <>
-      <div className="user-panel">
+      <div className="user-panel" data-onboarding-id="onboarding-user-panel">
         <div
           className="user-panel-avatar"
           onClick={(e) => {
