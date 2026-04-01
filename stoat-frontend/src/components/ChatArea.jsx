@@ -485,6 +485,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
   const [scheduledAt, setScheduledAt] = useState('');
   const [editHistoryModal, setEditHistoryModal] = useState(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(null);
+  const [reactionPickerPosition, setReactionPickerPosition] = useState(null);
   const [showInputEmoji, setShowInputEmoji] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [pendingFiles, setPendingFiles] = useState([]);
@@ -548,7 +549,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
 
   useEffect(() => {
     let cancelled = false;
-    if (!channelId || !canAttachFiles || isRoom) {
+    if (!channelId || !canAttachFiles || isRoom || isMobile) {
       setCloudStats(null);
       return () => { cancelled = true; };
     }
@@ -562,7 +563,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       })
       .catch(() => { if (!cancelled) setCloudStats(null); });
     return () => { cancelled = true; };
-  }, [channelId, canAttachFiles, isRoom]);
+  }, [channelId, canAttachFiles, isRoom, isMobile]);
 
   useEffect(() => {
     if (loading || messages.length === 0) return;
@@ -1448,7 +1449,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
       rememberReaction(emoji);
       fetchMessages();
     } catch {}
-    setShowEmojiPicker(null); setContextMenu(null);
+    setShowEmojiPicker(null); setReactionPickerPosition(null); setContextMenu(null);
   };
   const removeReaction = async (msgId, emoji) => {
     try { await del(`/channels/${channelId}/messages/${msgId}/reactions/${encodeURIComponent(emoji)}`); fetchMessages(); } catch {}
@@ -1852,10 +1853,42 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
     openMentionCard(maybeMember || { user: userObj }, rect);
   };
 
+  const getReactionPickerPosition = (anchorRect) => {
+    if (!anchorRect || typeof window === 'undefined') return null;
+    const pickerWidth = 420;
+    const pickerMaxHeight = 440;
+    const pickerMinHeight = 220;
+    const viewportPadding = 12;
+    const gap = 8;
+    const availableAbove = Math.max(0, anchorRect.top - viewportPadding - gap);
+    const availableBelow = Math.max(0, window.innerHeight - anchorRect.bottom - viewportPadding - gap);
+    const placeBelow = availableBelow >= pickerMinHeight || (availableBelow > availableAbove && availableBelow > 120);
+    const availableHeight = placeBelow ? availableBelow : availableAbove;
+    const maxHeight = Math.max(Math.min(availableHeight, pickerMaxHeight), Math.min(pickerMinHeight, availableHeight || pickerMinHeight));
+    const unclampedLeft = anchorRect.right - pickerWidth;
+    const left = Math.max(viewportPadding, Math.min(unclampedLeft, window.innerWidth - pickerWidth - viewportPadding));
+    const top = placeBelow
+      ? Math.min(anchorRect.bottom + gap, window.innerHeight - maxHeight - viewportPadding)
+      : Math.max(viewportPadding, anchorRect.top - maxHeight - gap);
+    return { top, left, maxHeight };
+  };
+
+  const toggleReactionPicker = (msgId, anchorRect) => {
+    if (showEmojiPicker === msgId) {
+      setShowEmojiPicker(null);
+      setReactionPickerPosition(null);
+      return;
+    }
+    setShowEmojiPicker(msgId);
+    const next = getReactionPickerPosition(anchorRect);
+    setReactionPickerPosition(next ? { msgId, ...next } : null);
+  };
+
   const handleReactionEmojiSelect = (msgId) => (emoji) => {
     const reactionKey = emoji.type === 'unicode' ? emoji.emoji : emoji.id;
     addReaction(msgId, reactionKey);
     setShowEmojiPicker(null);
+    setReactionPickerPosition(null);
   };
 
   const handleInputKeyDown = (e) => {
@@ -1975,7 +2008,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
 
   return (
     <>
-    <div className={`chat-area${compactMode ? ' compact-mode' : ''}`} onClick={() => { setContextMenu(null); setShowEmojiPicker(null); setShowInputEmoji(false); setShowGifPicker(false); setMentionCard(null); }}>
+    <div className={`chat-area${compactMode ? ' compact-mode' : ''}`} onClick={() => { setContextMenu(null); setShowEmojiPicker(null); setReactionPickerPosition(null); setShowInputEmoji(false); setShowGifPicker(false); setMentionCard(null); }}>
       <div className="chat-header">
         {isMobile && (
           <button className="mobile-drawer-btn" onClick={openChannelSidebar} aria-label="Open channels">
@@ -1999,7 +2032,9 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
             <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 1 0-14 0v5l-2 2v1h18v-1l-2-2Z"/></svg>
           </button>
           <button className="chat-header-btn" onClick={() => { const next = !showDigest; setShowDigest(next); if (!showDigest) buildCatchUpSummary(); }} title="Catch me up">
-            <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M4 5h16v2H4V5Zm0 6h11v2H4v-2Zm0 6h16v2H4v-2Z"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
+              <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z" />
+            </svg>
           </button>
           <button className="chat-header-btn" onClick={() => { setShowPinned(!showPinned); setShowSearch(false); if (!showPinned) loadPinned(); }} title="Pinned Messages">
             <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
@@ -2017,7 +2052,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
             title="Ofeed — mini feed"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
-              <path fill="currentColor" d="M4 4h16v2H4V4zm0 5h10v2H4V9zm0 5h16v2H4v-2zm0 5h10v2H4v-2z"/>
+              <path fill="currentColor" d="M6.18 17.82c-.66 0-1.2-.54-1.2-1.2s.54-1.2 1.2-1.2 1.2.54 1.2 1.2-.54 1.2-1.2 1.2zM4 4.44v2.78c4.21.16 7.59 3.54 7.75 7.75h2.78C14.51 8.66 11.34 5.19 4 4.44zm0 5.66v2.78c2.63.17 4.75 2.29 4.92 4.92h2.77C13.99 14.18 10.82 10.71 4 10.1z" />
             </svg>
           </button>
           {isMobile && channel?.server && (
@@ -2368,32 +2403,22 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                     })}
                   </div>
                 )}
-                {isMobile && canReact && !isEditing && !msg._optimistic && (
-                  <div className="msg-mobile-quick-reactions">
-                    {quickReactionList.map((emoji) => (
-                      <button
-                        key={`mobile-quick-${msg._id}-${emoji}`}
-                        className="reaction-btn"
-                        onClick={(e) => { e.stopPropagation(); addReaction(msg._id, emoji); }}
-                        title={`React ${emoji}`}
-                      >
-                        {renderReactionEmoji(emoji)}
-                      </button>
-                    ))}
-                    <button className="reaction-btn" onClick={(e) => { e.stopPropagation(); setShowEmojiPicker(showEmojiPicker === msg._id ? null : msg._id); }} title="More reactions">
-                      +
-                    </button>
-                  </div>
-                )}
               </div>
               {!isEditing && !msg._optimistic && (
                 <div className="msg-action-bar" onClick={(e) => e.stopPropagation()}>
                   {canReact && (
-                    <button className="msg-action-btn" title="Add Reaction" onClick={() => setShowEmojiPicker(showEmojiPicker === msg._id ? null : msg._id)}>
+                    <button
+                      className="msg-action-btn"
+                      title="Add Reaction"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleReactionPicker(msg._id, e.currentTarget.getBoundingClientRect());
+                      }}
+                    >
                       <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>
                     </button>
                   )}
-                  {canReact && quickReactionList.map((emoji) => (
+                  {!isMobile && canReact && quickReactionList.map((emoji) => (
                     <button
                       key={`${msg._id}-quick-${emoji}`}
                       className="msg-action-btn msg-action-btn-quick-emoji"
@@ -2420,8 +2445,22 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
                 </div>
               )}
               {showEmojiPicker === msg._id && (
-                <div className="reaction-picker-wrap" onClick={(e) => e.stopPropagation()}>
-                  <EmojiPicker onSelect={handleReactionEmojiSelect(msg._id)} onClose={() => setShowEmojiPicker(null)} serverId={channel?.server} />
+                <div
+                  className={`reaction-picker-wrap${reactionPickerPosition?.msgId === msg._id ? ' reaction-picker-wrap-fixed' : ''}`}
+                  style={reactionPickerPosition?.msgId === msg._id
+                    ? {
+                        top: `${reactionPickerPosition.top}px`,
+                        left: `${reactionPickerPosition.left}px`,
+                        '--reaction-picker-max-height': `${reactionPickerPosition.maxHeight}px`,
+                      }
+                    : undefined}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <EmojiPicker
+                    onSelect={handleReactionEmojiSelect(msg._id)}
+                    onClose={() => { setShowEmojiPicker(null); setReactionPickerPosition(null); }}
+                    serverId={channel?.server}
+                  />
                 </div>
               )}
             </div>
@@ -2449,7 +2488,16 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               </div>
             ))}
             {canReact && (
-              <div className="ctx-item" onClick={() => { setShowEmojiPicker(contextMenu.msg._id); setContextMenu(null); }}>Add Reaction</div>
+              <div
+                className="ctx-item"
+                onClick={() => {
+                  const anchorRect = { left: contextMenu.x, right: contextMenu.x + 1, top: contextMenu.y, bottom: contextMenu.y + 1 };
+                  toggleReactionPicker(contextMenu.msg._id, anchorRect);
+                  setContextMenu(null);
+                }}
+              >
+                Add Reaction
+              </div>
             )}
             <div className="ctx-item" onClick={() => startThread(contextMenu.msg)}>
               <svg width="14" height="14" viewBox="0 0 24 24" style={{marginRight:6,verticalAlign:'middle'}}><path fill="currentColor" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
@@ -2734,7 +2782,7 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
               </svg>
             </button>
             )}
-            {cloudStats && cloudStats.quota_bytes > 0 && (
+            {!isMobile && cloudStats && cloudStats.quota_bytes > 0 && (
               <Link
                 to="/cloud"
                 className={`chat-cloud-hint${cloudStats.used_bytes / cloudStats.quota_bytes >= 0.85 ? ' chat-cloud-hint--warn' : ''}`}
@@ -2786,9 +2834,11 @@ export default function ChatArea({ channelId, serverRoles, serverOwnerId, onChan
             <button type="button" className="chat-gif-btn" onClick={(e) => { e.stopPropagation(); setShowGifPicker((v) => !v); }} title="GIFs">
               GIF
             </button>
-            <button type="button" className="chat-gif-btn" onClick={scheduleMessagePrompt} title="Schedule send">
-              Schedule
-            </button>
+            {!isMobile && (
+              <button type="button" className="chat-gif-btn" onClick={scheduleMessagePrompt} title="Schedule send">
+                Schedule
+              </button>
+            )}
             {isMobile && (
               <button
                 type="submit"

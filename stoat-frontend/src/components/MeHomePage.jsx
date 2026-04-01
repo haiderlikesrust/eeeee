@@ -355,26 +355,6 @@ export default function MeHomePage() {
           </article>
         </div>
 
-        <section className="me-home-rooms-cta">
-          <h2 className="me-home-discover-title">Opic Rooms</h2>
-          <p className="me-home-discover-sub">
-            Temporary hangout spaces with chat and voice. Create one in seconds &mdash; it closes when everyone leaves.
-          </p>
-          <div className="me-home-template-row">
-            <button
-              type="button"
-              className="me-home-btn me-home-btn-room"
-              title="Opic Rooms are still in works"
-              onClick={() => toast.info('Opic Rooms are still in works.')}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style={{ marginRight: 6 }}>
-                <path fill="currentColor" d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />
-              </svg>
-              Create a Room
-            </button>
-          </div>
-        </section>
-
         <footer className="me-home-actions">
           <Link to="/channels/@me/friends" className="me-home-btn me-home-btn-primary">
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">

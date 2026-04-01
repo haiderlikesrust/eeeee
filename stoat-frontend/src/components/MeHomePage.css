@@ -588,23 +588,6 @@
   border-color: rgba(255, 255, 255, 0.12);
 }
 
-.me-home-rooms-cta {
-  margin-bottom: 20px;
-}
-
-.me-home-btn-room {
-  background: #43b581;
-  color: #fff;
-  border-color: #43b581;
-  display: inline-flex;
-  align-items: center;
-}
-
-.me-home-btn-room:hover {
-  background: #3aa876;
-  border-color: #3aa876;
-}
-
 @media (min-width: 560px) {
   .me-home-grid {
     display: grid;

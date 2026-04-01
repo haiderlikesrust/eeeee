@@ -136,7 +136,7 @@ export default function VoiceChannelView({ channel }) {
             title="Ofeed — mini feed"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
-              <path fill="currentColor" d="M4 4h16v2H4V4zm0 5h10v2H4V9zm0 5h16v2H4v-2zm0 5h10v2H4v-2z"/>
+              <path fill="currentColor" d="M6.18 17.82c-.66 0-1.2-.54-1.2-1.2s.54-1.2 1.2-1.2 1.2.54 1.2 1.2-.54 1.2-1.2 1.2zM4 4.44v2.78c4.21.16 7.59 3.54 7.75 7.75h2.78C14.51 8.66 11.34 5.19 4 4.44zm0 5.66v2.78c2.63.17 4.75 2.29 4.92 4.92h2.77C13.99 14.18 10.82 10.71 4 10.1z" />
             </svg>
           </button>
           {isMobile && (

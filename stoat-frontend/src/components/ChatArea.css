@@ -766,6 +766,21 @@
   z-index: 10;
 }
 
+.reaction-picker-wrap.reaction-picker-wrap-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  z-index: 420;
+}
+
+.reaction-picker-wrap.reaction-picker-wrap-fixed .emoji-picker-full {
+  position: static;
+  bottom: auto;
+  right: auto;
+  max-height: var(--reaction-picker-max-height, 440px);
+}
+
 .input-emoji-wrap {
   position: relative;
 }
@@ -1188,10 +1203,6 @@
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 4px;
-}
-
-.msg-mobile-quick-reactions {
-  display: none;
 }
 
 .reaction-btn {
@@ -1757,13 +1768,6 @@
 
   .msg-action-bar {
     right: 8px;
-  }
-
-  .msg-mobile-quick-reactions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: 6px;
   }
 
   .search-panel,
