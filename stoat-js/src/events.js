@@ -125,9 +125,9 @@ export const GatewayIntents = {
 const voiceStates = new Map();
 
 function getVoiceMembers(channelId) {
-  const state = voiceStates.get(channelId);
+  const state = voiceStates.get(String(channelId));
   if (!state) return [];
-  return [...state.keys()];
+  return [...state.keys()].map((id) => String(id));
 }
 
 function broadcastToVoiceChannel(channelId, event, excludeUserId) {
@@ -297,15 +297,18 @@ export function createEventServer(server) {
           }
 
           case 'VoiceJoin': {
-            const channelId = msg.channelId;
+            const channelId = String(msg.channelId || '');
             if (!channelId) break;
+            const userIdStr = String(userId);
+            if (!entry) break;
 
             // Only allow joining voice channels the user has access to (same server membership)
             const channel = await Channel.findById(channelId).lean();
             if (!channel || channel.channel_type !== 'VoiceChannel') break;
             const serverId = channel.server;
             let allowed = false;
-            if (serverId && entry.serverIds && entry.serverIds.some((sid) => String(sid) === String(serverId))) {
+            const isServerMember = !!(serverId && await Member.findOne({ server: serverId, user: userId }).select('_id').lean());
+            if (isServerMember) {
               allowed = true;
             } else if (serverId) {
               const room = await Room.findById(serverId).select('_id members status').lean();
@@ -319,14 +322,14 @@ export function createEventServer(server) {
             leaveAllVoice(userId, key);
 
             // Join the new channel
-            const isServerChannel = !!(serverId && entry.serverIds && entry.serverIds.some((sid) => String(sid) === String(serverId)));
+            const isServerChannel = isServerMember;
             if (!voiceStates.has(channelId)) voiceStates.set(channelId, new Map());
-            voiceStates.get(channelId).set(userId, { clientKey: key, serverId: String(serverId), isServer: isServerChannel });
+            voiceStates.get(channelId).set(userIdStr, { clientKey: key, serverId: String(serverId), isServer: isServerChannel });
 
             const members = getVoiceMembers(channelId);
             const voiceStateEvt = {
               type: 'VoiceStateUpdate',
-              data: { channelId, userId, action: 'join', members },
+              data: { channelId, userId: userIdStr, action: 'join', members },
             };
             if (isServerChannel) {
               broadcastToServer(serverId, voiceStateEvt).catch(() => {});
@@ -334,10 +337,10 @@ export function createEventServer(server) {
               broadcastToRoom(serverId, voiceStateEvt).catch(() => {});
             }
 
-            const existingMembers = members.filter((id) => id !== userId);
+            const existingMembers = members.filter((id) => id !== userIdStr);
             ws.send(JSON.stringify({
               type: 'VoiceReady',
-              data: { channelId, members: existingMembers, userId },
+              data: { channelId, members: existingMembers, userId: userIdStr },
             }));
             if (kind === 'user') {
               void recordServerEvent({
@@ -357,14 +360,24 @@ export function createEventServer(server) {
 
           case 'VoiceSignal': {
             // Relay WebRTC signaling only between users in the same voice channel
-            const { targetUserId, signal, channelId } = msg;
+            const targetUserId = String(msg.targetUserId || '');
+            const channelId = String(msg.channelId || '');
+            const signal = msg.signal;
             if (!targetUserId || !signal || !channelId) break;
             const vcState = voiceStates.get(channelId);
-            if (!vcState || !vcState.has(userId) || !vcState.has(targetUserId)) break;
-            broadcastToUser(targetUserId, {
+            if (!vcState || !vcState.has(String(userId)) || !vcState.has(targetUserId)) break;
+            const payload = {
               type: 'VoiceSignal',
-              data: { fromUserId: userId, channelId, signal },
-            });
+              data: { fromUserId: String(userId), channelId, signal },
+            };
+            const targetVoice = vcState.get(targetUserId);
+            const targetEntry = targetVoice?.clientKey ? clients.get(targetVoice.clientKey) : null;
+            if (targetEntry && targetEntry.ws.readyState === 1) {
+              targetEntry.ws.send(JSON.stringify(payload));
+            } else {
+              // Fallback: user may have reconnected and VC key may be stale.
+              broadcastToUser(targetUserId, payload);
+            }
             break;
           }
 
@@ -561,8 +574,9 @@ export function createEventServer(server) {
 
 function leaveAllVoice(userId, key) {
   const voiceClientKind = clients.get(key)?.kind;
+  const userIdStr = String(userId);
   for (const [channelId, state] of voiceStates.entries()) {
-    if (state.has(userId)) {
+    if (state.has(userIdStr)) {
       if (voiceClientKind === 'user') {
         void recordServerEvent({
           userId,
@@ -571,12 +585,12 @@ function leaveAllVoice(userId, key) {
           platform: 'gateway',
         });
       }
-      const info = state.get(userId);
-      state.delete(userId);
+      const info = state.get(userIdStr);
+      state.delete(userIdStr);
       const members = getVoiceMembers(channelId);
       const evt = {
         type: 'VoiceStateUpdate',
-        data: { channelId, userId, action: 'leave', members },
+        data: { channelId: String(channelId), userId: userIdStr, action: 'leave', members },
       };
       if (info?.isServer && info?.serverId) {
         broadcastToServer(info.serverId, evt).catch(() => {});

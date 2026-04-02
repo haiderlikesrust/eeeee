@@ -37,16 +37,22 @@ export default function VoiceChannelView({ channel }) {
   const ofeed = useOfeed();
   const [memberUsers, setMemberUsers] = useState({});
   const [expandedScreenUserId, setExpandedScreenUserId] = useState(null);
+  const [expandedCameraUserId, setExpandedCameraUserId] = useState(null);
   const [focusedScreenUserId, setFocusedScreenUserId] = useState(null);
   const [clipping, setClipping] = useState(false);
   const [clipMsg, setClipMsg] = useState('');
 
   useEffect(() => {
-    if (expandedScreenUserId == null) return;
-    const onKey = (e) => { if (e.key === 'Escape') setExpandedScreenUserId(null); };
+    if (expandedScreenUserId == null && expandedCameraUserId == null) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setExpandedScreenUserId(null);
+        setExpandedCameraUserId(null);
+      }
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [expandedScreenUserId]);
+  }, [expandedScreenUserId, expandedCameraUserId]);
 
   const isConnected = currentChannel?.id === channel?._id;
   const membersInChannel = voiceMembers?.[channel?._id] || [];
@@ -158,6 +164,8 @@ export default function VoiceChannelView({ channel }) {
                   stream={tile.stream}
                   label={`${memberUsers[tile.userId]?.display_name || memberUsers[tile.userId]?.username || (tile.isMe ? 'You' : tile.userId?.slice(0, 8) || 'User')}${tile.isMe ? ' (You)' : ''}`}
                   isCamera
+                  onExpand={() => setExpandedCameraUserId(tile.userId)}
+                  expandTitle="Enlarge camera"
                 />
               ))}
             </div>
@@ -209,6 +217,29 @@ export default function VoiceChannelView({ channel }) {
                   <div className="voice-screen-overlay-header">
                     <span className="voice-screen-overlay-title">{name}&apos;s screen</span>
                     <button type="button" className="voice-screen-overlay-close" onClick={() => setExpandedScreenUserId(null)} title="Close expanded view">
+                      <svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+                    </button>
+                  </div>
+                  <div className="voice-screen-overlay-video-wrap">
+                    <ScreenShareVideo stream={tile.stream} />
+                  </div>
+                  <p className="voice-screen-overlay-hint">Click outside or press Escape to close</p>
+                </div>
+              </div>
+            );
+          })()}
+
+          {expandedCameraUserId != null && (() => {
+            const tile = cameraTiles.find((t) => t.userId === expandedCameraUserId);
+            if (!tile) return null;
+            const name = memberUsers[tile.userId]?.display_name || memberUsers[tile.userId]?.username || tile.userId?.slice(0, 8) || 'Camera';
+            return (
+              <div className="voice-screen-overlay" role="dialog" aria-label={`${name}'s camera (expanded view)`}>
+                <div className="voice-screen-overlay-backdrop" onClick={() => setExpandedCameraUserId(null)} />
+                <div className="voice-screen-overlay-content">
+                  <div className="voice-screen-overlay-header">
+                    <span className="voice-screen-overlay-title">{name}&apos;s camera</span>
+                    <button type="button" className="voice-screen-overlay-close" onClick={() => setExpandedCameraUserId(null)} title="Close expanded view">
                       <svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
                     </button>
                   </div>
@@ -335,7 +366,7 @@ export default function VoiceChannelView({ channel }) {
             </button>
           </div>
         ) : (
-          <button className="voice-join-btn" onClick={() => joinVoice(channel._id, channel.name)}>
+          <button className="voice-join-btn" onClick={() => joinVoice(channel._id, channel.name, channel?.server, channel?.server_name)}>
             <svg width="22" height="22" viewBox="0 0 24 24">
               <path fill="currentColor" d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2H3v2a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12v-2h-2z"/>
             </svg>
@@ -362,8 +393,8 @@ function VideoTile({ stream, label, isCamera, isScreen, onExpand, expandTitle })
     <div className={className}>
       <video ref={ref} autoPlay playsInline muted className="voice-screen-video" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
       <div className="voice-screen-label">{label}</div>
-      {isScreen && onExpand && (
-        <button type="button" className="voice-screen-expand-btn" onClick={onExpand} title={expandTitle || 'Expand'} aria-label={expandTitle || 'Expand screen share'}>
+      {onExpand && (
+        <button type="button" className="voice-screen-expand-btn" onClick={onExpand} title={expandTitle || 'Expand'} aria-label={expandTitle || 'Expand video'}>
           <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
           <span>Expand</span>
         </button>

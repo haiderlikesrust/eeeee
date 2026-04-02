@@ -5,10 +5,29 @@ import { playSelfJoin, playSelfLeave, playOtherJoin, playOtherLeave } from '../u
 
 const VoiceContext = createContext(null);
 
-const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-];
+const DEFAULT_STUN_URLS = ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'];
+
+function parseIceUrls(...values) {
+  return values
+    .flatMap((value) => String(value || '').split(','))
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function buildIceServers() {
+  const stunUrls = parseIceUrls(import.meta.env.VITE_STUN_URLS, import.meta.env.VITE_STUN_URL);
+  const turnUrls = parseIceUrls(import.meta.env.VITE_TURN_URLS, import.meta.env.VITE_TURN_URL);
+  const turnUsername = String(import.meta.env.VITE_TURN_USERNAME || '').trim();
+  const turnCredential = String(import.meta.env.VITE_TURN_CREDENTIAL || '').trim();
+  const servers = [];
+  servers.push({ urls: stunUrls.length > 0 ? stunUrls : DEFAULT_STUN_URLS });
+  if (turnUrls.length > 0 && turnUsername && turnCredential) {
+    servers.push({ urls: turnUrls, username: turnUsername, credential: turnCredential });
+  }
+  return servers;
+}
+
+const ICE_SERVERS = buildIceServers();
 const CLIP_CONSENT_KEY = 'opic.voice.clipConsentEnabled';
 const CLIP_WINDOW_MS = 30_000;
 
@@ -435,8 +454,8 @@ export function VoiceProvider({ children }) {
     }
 
     if (isInitiator) {
-      pc.createOffer().then((offer) => {
-        pc.setLocalDescription(offer);
+      pc.createOffer().then(async (offer) => {
+        await pc.setLocalDescription(offer);
         send({
           type: 'VoiceSignal',
           targetUserId: remoteUserId,
