@@ -653,6 +653,25 @@ export function VoiceProvider({ children }) {
           return next;
         });
       }
+      // Auto-rejoin voice channel after WS reconnect (server cleared our state on disconnect)
+      const prevChannelId = currentChannelIdRef.current;
+      if (prevChannelId && localStreamRef.current) {
+        for (const [, analyserData] of speakingAnalyserRef.current.entries()) {
+          if (analyserData.intervalId) clearInterval(analyserData.intervalId);
+          if (analyserData.context) analyserData.context.close().catch(() => {});
+        }
+        speakingAnalyserRef.current.clear();
+        setSpeakingUserIds(new Set());
+        for (const [, pc] of peersRef.current.entries()) pc.close();
+        peersRef.current.clear();
+        for (const [, audio] of audioElementsRef.current.entries()) {
+          audio.pause();
+          audio.srcObject = null;
+        }
+        audioElementsRef.current.clear();
+        audioStreamsRef.current.clear();
+        send({ type: 'VoiceJoin', channelId: prevChannelId });
+      }
     });
 
     const unsubState = on('VoiceStateUpdate', (data) => {
@@ -675,16 +694,42 @@ export function VoiceProvider({ children }) {
         return next;
       });
       if (data.action === 'leave' && data.userId) {
+        const leavingId = data.userId;
+        const pc = peersRef.current.get(leavingId);
+        if (pc) {
+          pc.close();
+          peersRef.current.delete(leavingId);
+        }
+        const audio = audioElementsRef.current.get(leavingId);
+        if (audio) {
+          audio.pause();
+          audio.srcObject = null;
+          audioElementsRef.current.delete(leavingId);
+        }
+        audioStreamsRef.current.delete(leavingId);
+        const analyserData = speakingAnalyserRef.current.get(leavingId);
+        if (analyserData) {
+          if (analyserData.intervalId) clearInterval(analyserData.intervalId);
+          if (analyserData.context) analyserData.context.close().catch(() => {});
+          speakingAnalyserRef.current.delete(leavingId);
+        }
+        setSpeakingUserIds((prev) => {
+          if (!prev.has(leavingId)) return prev;
+          const next = new Set(prev);
+          next.delete(leavingId);
+          return next;
+        });
+        syncClipSources();
         setRemoteScreenStreams((prev) => {
-          if (!prev[data.userId]) return prev;
+          if (!prev[leavingId]) return prev;
           const next = { ...prev };
-          delete next[data.userId];
+          delete next[leavingId];
           return next;
         });
         setRemoteCameraStreams((prev) => {
-          if (!prev[data.userId]) return prev;
+          if (!prev[leavingId]) return prev;
           const next = { ...prev };
-          delete next[data.userId];
+          delete next[leavingId];
           return next;
         });
       }

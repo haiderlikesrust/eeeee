@@ -206,8 +206,8 @@ export function createEventServer(server) {
     // Build voice states for the user's servers and active rooms
     const voiceStatesData = {};
     for (const ch of channels) {
-      const members = getVoiceMembers(ch._id);
-      if (members.length > 0) voiceStatesData[ch._id] = members;
+      const members = getVoiceMembers(String(ch._id));
+      if (members.length > 0) voiceStatesData[String(ch._id)] = members;
     }
     for (const [voiceChannelId, state] of voiceStates.entries()) {
       const asServerChannel = channels.some((ch) => String(ch._id) === String(voiceChannelId));
@@ -319,16 +319,20 @@ export function createEventServer(server) {
             leaveAllVoice(userId, key);
 
             // Join the new channel
+            const isServerChannel = !!(serverId && entry.serverIds && entry.serverIds.some((sid) => String(sid) === String(serverId)));
             if (!voiceStates.has(channelId)) voiceStates.set(channelId, new Map());
-            voiceStates.get(channelId).set(userId, { clientKey: key });
+            voiceStates.get(channelId).set(userId, { clientKey: key, serverId: String(serverId), isServer: isServerChannel });
 
             const members = getVoiceMembers(channelId);
             const voiceStateEvt = {
               type: 'VoiceStateUpdate',
               data: { channelId, userId, action: 'join', members },
             };
-            // Notify all channel participants (server members or room members)
-            broadcastToChannel(channelId, voiceStateEvt).catch(() => {});
+            if (isServerChannel) {
+              broadcastToServer(serverId, voiceStateEvt).catch(() => {});
+            } else {
+              broadcastToRoom(serverId, voiceStateEvt).catch(() => {});
+            }
 
             const existingMembers = members.filter((id) => id !== userId);
             ws.send(JSON.stringify({
@@ -567,14 +571,18 @@ function leaveAllVoice(userId, key) {
           platform: 'gateway',
         });
       }
+      const info = state.get(userId);
       state.delete(userId);
       const members = getVoiceMembers(channelId);
       const evt = {
         type: 'VoiceStateUpdate',
         data: { channelId, userId, action: 'leave', members },
       };
-      // Notify all server members so sidebar stays in sync (including the user who left)
-      broadcastToChannel(channelId, evt).catch(() => {});
+      if (info?.isServer && info?.serverId) {
+        broadcastToServer(info.serverId, evt).catch(() => {});
+      } else if (info?.serverId) {
+        broadcastToRoom(info.serverId, evt).catch(() => {});
+      }
       const entry = clients.get(key);
       if (entry && entry.ws.readyState === 1) {
         entry.ws.send(JSON.stringify(evt));
